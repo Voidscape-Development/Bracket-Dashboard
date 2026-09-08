@@ -155,7 +155,7 @@ jobs:
             packages/desktop/release/*.dmg
 
   publish:
-    name: Publish ${{ needs.meta.outputs.channel }} release
+    name: Publish release
     needs: [meta, build]
     if: needs.meta.outputs.channel != 'none'
     runs-on: ubuntu-latest
