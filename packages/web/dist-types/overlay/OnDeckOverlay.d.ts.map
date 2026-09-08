@@ -1,0 +1,1 @@
+{"version":3,"file":"OnDeckOverlay.d.ts","sourceRoot":"","sources":["../../src/overlay/OnDeckOverlay.tsx"],"names":[],"mappings":"AAAA;;;;;GAKG;AAEH,OAAO,EAGL,KAAK,UAAU,EACf,KAAK,aAAa,EACnB,MAAM,iBAAiB,CAAC;AAGzB,MAAM,WAAW,kBAAkB;IACjC,IAAI,EAAE,UAAU,CAAC;IACjB,IAAI,EAAE,aAAa,EAAE,CAAC;CACvB;AAED,wBAAgB,aAAa,CAAC,EAAE,IAAI,EAAE,IAAI,EAAE,EAAE,kBAAkB,+BA4D/D"}

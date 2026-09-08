@@ -1,0 +1,1 @@
+{"version":3,"file":"StandingsOverlay.d.ts","sourceRoot":"","sources":["../../src/overlay/StandingsOverlay.tsx"],"names":[],"mappings":"AAAA;;;;;GAKG;AAEH,OAAO,KAAK,EAAE,UAAU,EAAE,QAAQ,EAAuB,MAAM,iBAAiB,CAAC;AAGjF,MAAM,WAAW,qBAAqB;IACpC,IAAI,EAAE,UAAU,CAAC;IACjB,SAAS,EAAE,QAAQ,EAAE,CAAC;CACvB;AAiBD,wBAAgB,gBAAgB,CAAC,EAAE,IAAI,EAAE,SAAS,EAAE,EAAE,qBAAqB,+BA4B1E"}
