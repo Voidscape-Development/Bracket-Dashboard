@@ -20,6 +20,7 @@ export const SET_FRAGMENT_RICH = /* GraphQL */ `
     totalGames
     startedAt
     completedAt
+    updatedAt
     station {
       id
       number
@@ -97,6 +98,11 @@ export const SET_FRAGMENT_RICH = /* GraphQL */ `
   }
 `;
 
+/**
+ * Deliberately does not ask for `updatedAt`: this fragment is the safety net
+ * the rich one falls back to, so it stays limited to fields that have never
+ * moved. The sync watermark falls back to completedAt/startedAt without it.
+ */
 export const SET_FRAGMENT_LEAN = /* GraphQL */ `
   fragment SetParts on Set {
     id
@@ -140,12 +146,20 @@ export const SET_FRAGMENT_LEAN = /* GraphQL */ `
 `;
 
 /**
- * Whole-tournament structure in one call: events, phases and phase groups. This
- * is the call the complexity ceiling on the documented endpoint makes painful
- * and the site endpoint makes cheap.
+ * Whole-tournament structure in one call: events, phases and phase groups.
+ *
+ * This is the most complexity-hungry read in the app, and both endpoints cap a
+ * response at 1000 objects. The cost is roughly
+ *
+ *     events x phases x groupPerPage x (1 + rounds per group)
+ *
+ * so the group page size is a variable, not a constant: the client shrinks it
+ * when start.gg rejects the request and pages in whatever was cut off. The old
+ * hard-coded `perPage: 250` is what pushed a multi-event tournament with pools
+ * past the ceiling in a single call.
  */
 export const TOURNAMENT_STRUCTURE = /* GraphQL */ `
-  query TournamentStructure($slug: String!) {
+  query TournamentStructure($slug: String!, $groupPage: Int!, $groupPerPage: Int!) {
     tournament(slug: $slug) {
       id
       name
@@ -176,7 +190,12 @@ export const TOURNAMENT_STRUCTURE = /* GraphQL */ `
           bracketType
           groupCount
           state
-          phaseGroups(query: { page: 1, perPage: 250 }) {
+          phaseGroups(query: { page: $groupPage, perPage: $groupPerPage }) {
+            pageInfo {
+              total
+              totalPages
+              page
+            }
             nodes {
               id
               displayIdentifier
@@ -187,6 +206,75 @@ export const TOURNAMENT_STRUCTURE = /* GraphQL */ `
                 bestOf
               }
             }
+          }
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * Structure without any phase groups: the fallback for a tournament so large
+ * that even one group per phase breaches the ceiling. Groups are then fetched
+ * per phase with PHASE_GROUPS and stitched back on.
+ */
+export const TOURNAMENT_EVENTS = /* GraphQL */ `
+  query TournamentEvents($slug: String!) {
+    tournament(slug: $slug) {
+      id
+      name
+      slug
+      startAt
+      endAt
+      timezone
+      venueName
+      city
+      events {
+        id
+        name
+        slug
+        state
+        startAt
+        numEntrants
+        videogame {
+          id
+          name
+          images(type: "primary") {
+            url
+          }
+        }
+        phases {
+          id
+          name
+          phaseOrder
+          bracketType
+          groupCount
+          state
+        }
+      }
+    }
+  }
+`;
+
+/** One phase's groups, paged. Used to complete or replace the structure read. */
+export const PHASE_GROUPS = /* GraphQL */ `
+  query PhaseGroups($phaseId: ID!, $page: Int!, $perPage: Int!) {
+    phase(id: $phaseId) {
+      id
+      phaseGroups(query: { page: $page, perPage: $perPage }) {
+        pageInfo {
+          total
+          totalPages
+          page
+        }
+        nodes {
+          id
+          displayIdentifier
+          bracketType
+          state
+          rounds {
+            number
+            bestOf
           }
         }
       }
@@ -315,12 +403,16 @@ export const EVENT_STANDINGS = /* GraphQL */ `
 `;
 
 export const EVENT_STATIONS = /* GraphQL */ `
-  query EventStations($eventId: ID!) {
+  query EventStations($eventId: ID!, $page: Int!, $perPage: Int!) {
     event(id: $eventId) {
       id
       tournament {
         id
-        stations(query: { page: 1, perPage: 250 }) {
+        stations(query: { page: $page, perPage: $perPage }) {
+          pageInfo {
+            totalPages
+            page
+          }
           nodes {
             id
             number

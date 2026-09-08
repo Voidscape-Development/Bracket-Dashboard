@@ -25,6 +25,14 @@ export interface AppConfig {
   /** Extra headers for the site endpoint, e.g. a session cookie for mutations. */
   startggHeaders: Record<string, string>;
   requestsPerMinute: number;
+  /**
+   * Opening page size for set-heavy reads. start.gg caps a response at 1000
+   * objects and a set carries 25-55 of them, so this is deliberately modest;
+   * the client shrinks it further if start.gg still refuses.
+   */
+  perPage: number;
+  /** Opening page size for pools inside the whole-tournament structure read. */
+  groupsPerPage: number;
   /** Directory of built web assets to serve; null in dev (Vite serves them). */
   webRoot: string | null;
   sessionTtlMs: number;
@@ -53,6 +61,12 @@ function parseHeaders(raw: string | undefined): Record<string, string> {
   }
 }
 
+/** A positive integer from the environment, or the default if it is not one. */
+function positive(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+}
+
 function bool(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
   return /^(1|true|yes|on)$/i.test(value);
@@ -76,6 +90,9 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     startggHeaders: overrides.startggHeaders ?? parseHeaders(process.env.STARTGG_HEADERS),
     requestsPerMinute:
       overrides.requestsPerMinute ?? Number(process.env.STARTGG_RPM ?? 45),
+    perPage: overrides.perPage ?? positive(process.env.STARTGG_PER_PAGE, 25),
+    groupsPerPage:
+      overrides.groupsPerPage ?? positive(process.env.STARTGG_GROUPS_PER_PAGE, 32),
     webRoot: overrides.webRoot ?? process.env.BRACKET_WEB_ROOT ?? null,
     sessionTtlMs: overrides.sessionTtlMs ?? 1000 * 60 * 60 * 24 * 14,
     syncEnabled: overrides.syncEnabled ?? bool(process.env.BRACKET_SYNC, true),

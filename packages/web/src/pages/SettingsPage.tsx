@@ -150,6 +150,14 @@ function ConnectionPanel({
             Reduced fields
           </span>
         )}
+        {settings.health?.pageSizes?.EventSets < 25 && (
+          <span
+            className="tag tag--warn"
+            title={`start.gg refused a full page for this tournament (its 1000-object per-request cap), so sets are being read ${settings.health.pageSizes.EventSets} at a time. Reads still complete; they take more calls.`}
+          >
+            Smaller pages ({settings.health.pageSizes.EventSets}/call)
+          </span>
+        )}
         <span className="muted">{settings.health?.requestsLastMinute ?? 0} calls/min</span>
       </div>
 
@@ -165,15 +173,15 @@ function ConnectionPanel({
           disabled={!canEdit}
           onChange={(e) => setTransport(e.target.value)}
         >
-          <option value="web">Site endpoint (no token, no complexity limit)</option>
+          <option value="web">Site endpoint (no token needed)</option>
           <option value="official">Documented API (requires a token)</option>
           <option value="mock">Demo mode (simulated tournament, no network)</option>
         </select>
         <span className="field__hint">
           {transport === 'web' &&
-            'Uses the same endpoint the start.gg website uses. No token needed for reading, and large tournament queries are not rejected for complexity. It is undocumented, so it can change without notice.'}
+            'Uses the same endpoint the start.gg website uses, with the same browser headers. No token needed for reading. It is undocumented, so it can change without notice. Like the documented API, it caps a response at 1000 objects — the app pages around that automatically.'}
           {transport === 'official' &&
-            'The documented start.gg API. Stable and supported, but requires a personal access token and enforces query complexity limits.'}
+            'The documented start.gg API. Stable and supported, but requires a personal access token. Caps a response at 1000 objects, the same as the site endpoint.'}
           {transport === 'mock' &&
             'Runs against a simulated tournament so you can lay out overlays and rehearse without touching start.gg.'}
         </span>

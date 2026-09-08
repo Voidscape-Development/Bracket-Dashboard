@@ -211,13 +211,35 @@ headers.
 Two endpoints are supported, switchable in **Settings** without touching code:
 
 - **Site endpoint** (default) — `https://www.start.gg/api/-/gql`, the endpoint the
-  start.gg website itself uses. No token needed for reading, and no query
-  complexity ceiling, which is what makes pulling a whole multi-event tournament
-  in one call practical. It is **undocumented**, so it can change without notice.
+  start.gg website itself uses. No token needed for reading. Requests carry the
+  same browser headers the site's own calls do. It is **undocumented**, so it can
+  change without notice.
 - **Documented API** — `https://api.start.gg/gql/alpha`. Stable and supported, but
-  requires a personal access token and enforces complexity limits.
+  requires a personal access token.
 
 Both go through one transport interface, so switching is a settings change.
+
+**Both enforce the same object-count ceiling**: a response may contain at most
+1000 objects, counting every nested one, and start.gg rejects the request
+outright when a query would exceed it —
+
+```
+Your query complexity is too high. A maximum of 1000 objects may be
+returned by each request (actual: 1219)
+```
+
+The site endpoint is not a way around this. Page sizes are therefore adaptive:
+each operation starts at a size chosen for how fat its nodes are, and if
+start.gg refuses, the client uses the ratio in the error to pick a size that
+fits and walks the connection again from the first page. The learned size is
+kept for the rest of the session and shown in **Settings**. The whole-tournament
+structure read has a third gear as well: if even one pool per phase is too much
+for one call, it splits into an events read plus a per-phase pools read.
+
+Tune the opening sizes with `STARTGG_PER_PAGE` (set-heavy reads) and
+`STARTGG_GROUPS_PER_PAGE` (pools in the structure read) if a particular
+tournament shape needs it; the adaptive shrink means you usually should not
+have to.
 
 Reporting *to* start.gg requires a credential that can perform writes. Without
 one, reads and overlays work normally and reports queue locally; the UI says so
