@@ -96,6 +96,8 @@ export class SyncEngine extends EventEmitter {
   private readonly standingsIntervalMs: number;
   private readonly states = new Map<Id, EventSyncState>();
   private readonly lastStandingsAt = new Map<Id, number>();
+  /** Last per-pool set read, which is rate-limited: see `readEventSets`. */
+  private readonly lastGroupFallbackAt = new Map<Id, number>();
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
@@ -230,7 +232,14 @@ export class SyncEngine extends EventEmitter {
 
   private async syncEvent(state: EventSyncState): Promise<void> {
     const eventId = state.eventId;
+    // An event holding no sets is either one whose bracket has not been
+    // published or one whose sets never arrived — a finished tournament
+    // imported by a build that asked start.gg for them in call order, say. A
+    // delta keyed off the watermark can never fill either in, because upstream
+    // nothing has changed since, so the read has to go back to unfiltered.
+    const storedSets = this.store.countSets(eventId);
     const needsFull =
+      storedSets === 0 ||
       state.lastFullReconcileAt === null ||
       Date.now() - state.lastFullReconcileAt > this.cadence.fullReconcileMs;
 
@@ -239,7 +248,7 @@ export class SyncEngine extends EventEmitter {
     const updatedAfter =
       watermark === null ? null : Math.max(0, watermark - this.cadence.overlapSeconds);
 
-    const { sets } = await this.client.fetchEventSets(eventId, updatedAfter);
+    const sets = await this.readEventSets(eventId, updatedAfter, needsFull);
 
     // Protect optimistic local reports: a set still queued in the outbox keeps
     // its local value until the send confirms or conflicts.
@@ -276,6 +285,72 @@ export class SyncEngine extends EventEmitter {
   }
 
   /**
+   * Sets for an event, with a second route for the case that matters most after
+   * the fact.
+   *
+   * A finished bracket is the one shape where "the event returned no sets" is
+   * ambiguous: it reads the same as a quiet delta, but it can also mean the
+   * event-level connection declined to list sets that are no longer in play.
+   * On an unfiltered read the empty answer is never right for an event that has
+   * brackets, so each phase group is asked directly — a different resolver,
+   * scoped to a bracket rather than to what is currently callable.
+   *
+   * Only unfiltered reads take the fallback. A delta pass returning nothing is
+   * the normal, cheap case and must stay one request.
+   */
+  private async readEventSets(
+    eventId: Id,
+    updatedAfter: number | null,
+    allowFallback: boolean,
+  ): Promise<TournamentSet[]> {
+    const { sets } = await this.client.fetchEventSets(eventId, updatedAfter);
+    if (sets.length > 0 || !allowFallback) return sets;
+
+    // An event whose bracket has simply not been generated yet answers empty
+    // too, and that is the far more common reason. Confirming it costs one
+    // request per pool, so the fallback runs on the first look at an event and
+    // then no more often than a full reconcile — enough to repair a database
+    // that missed its sets, not enough to poll a 64-pool event to death while
+    // it waits for seeding.
+    const lastAttempt = this.lastGroupFallbackAt.get(eventId);
+    if (lastAttempt !== undefined && Date.now() - lastAttempt < this.cadence.fullReconcileMs) {
+      return sets;
+    }
+    this.lastGroupFallbackAt.set(eventId, Date.now());
+    return this.readSetsByPhaseGroup(eventId);
+  }
+
+  /**
+   * Every set of an event, gathered one bracket at a time.
+   *
+   * A pool that fails is not allowed to lose the pools that answered — the
+   * write is purely additive, so partial results are worth keeping. Only a
+   * clean sweep of failures is reported as one, which is what should trip the
+   * caller's error backoff.
+   */
+  private async readSetsByPhaseGroup(eventId: Id): Promise<TournamentSet[]> {
+    const event = this.store.getEvent(eventId);
+    const groupIds = (event?.phases ?? []).flatMap((phase) =>
+      phase.groups.map((group) => group.id),
+    );
+    if (groupIds.length === 0) return [];
+
+    const collected: TournamentSet[] = [];
+    let firstError: unknown = null;
+
+    for (const groupId of groupIds) {
+      try {
+        collected.push(...(await this.client.fetchPhaseGroupSets(groupId, eventId)));
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+
+    if (collected.length === 0 && firstError !== null) throw firstError;
+    return collected;
+  }
+
+  /**
    * Standings are refreshed when a set completes (placements just moved) or on a
    * slow timer. Fetching them every pass would double the call volume for data
    * that rarely changes.
@@ -302,7 +377,8 @@ export class SyncEngine extends EventEmitter {
 
   /**
    * First-time import: pulls structure, entrants and every set, then hands over
-   * to delta polling.
+   * to delta polling. "Every set" includes a tournament that finished months
+   * ago — the results are the whole point of importing one.
    */
   async importTournament(slug: string): Promise<{ tournamentId: Id; events: number } | null> {
     const tournament = await this.client.fetchTournamentStructure(slug);
@@ -315,7 +391,7 @@ export class SyncEngine extends EventEmitter {
         const entrants = await this.client.fetchEntrants(event.id);
         this.store.replaceEntrants(event.id, entrants);
 
-        const { sets } = await this.client.fetchEventSets(event.id, null);
+        const sets = await this.readEventSets(event.id, null, true);
         const { upserted } = this.store.upsertSets(sets);
         this.store.recordSyncSuccess(
           event.id,

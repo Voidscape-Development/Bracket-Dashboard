@@ -316,11 +316,38 @@ export const EVENT_ENTRANTS = /* GraphQL */ `
 `;
 
 /**
+ * How start.gg should order — and, in practice, which sets it will admit to
+ * having.
+ *
+ * `CALL_ORDER` is the endpoint's own default and the obvious pick for a venue
+ * display, but it is derived from the station call queue: a set that has been
+ * played is no longer waiting to be called, so it has no place in that ordering
+ * and start.gg leaves it out of the response entirely. Ask a finished bracket
+ * for its sets in call order and the answer is an empty page — which is exactly
+ * how importing a completed tournament produced an event with no sets at all.
+ *
+ * Nothing here depends on the order start.gg returns; the store sorts by round
+ * and identifier on the way back out. So reads ask for `STANDARD`, which covers
+ * every set whatever its state, and the call-order variant stays available for
+ * anything that genuinely wants the queue.
+ */
+export type SetSortType = 'STANDARD' | 'CALL_ORDER' | 'MAGIC' | 'RECENT' | 'NONE';
+
+/** Complete over convenient: a bracket read must include what already happened. */
+export const DEFAULT_SET_SORT: SetSortType = 'STANDARD';
+
+/**
  * Sets for an event, optionally only those touched since `updatedAfter`. The
  * filter is what keeps steady-state polling cheap: a quiet event returns an
  * empty page instead of the whole bracket.
+ *
+ * The sort is baked into the document rather than passed as a variable so a
+ * rename of start.gg's `SetSortType` enum cannot invalidate the whole query.
  */
-export function eventSetsQuery(setFragment: string): string {
+export function eventSetsQuery(
+  setFragment: string,
+  sortType: SetSortType = DEFAULT_SET_SORT,
+): string {
   return /* GraphQL */ `
     ${setFragment}
     query EventSets(
@@ -334,7 +361,7 @@ export function eventSetsQuery(setFragment: string): string {
         sets(
           page: $page
           perPage: $perPage
-          sortType: CALL_ORDER
+          sortType: ${sortType}
           filters: { updatedAfter: $updatedAfter, hideEmpty: false }
         ) {
           pageInfo {
@@ -351,7 +378,10 @@ export function eventSetsQuery(setFragment: string): string {
   `;
 }
 
-export function phaseGroupSetsQuery(setFragment: string): string {
+export function phaseGroupSetsQuery(
+  setFragment: string,
+  sortType: SetSortType = DEFAULT_SET_SORT,
+): string {
   return /* GraphQL */ `
     ${setFragment}
     query PhaseGroupSets($phaseGroupId: ID!, $page: Int!, $perPage: Int!) {
@@ -364,7 +394,7 @@ export function phaseGroupSetsQuery(setFragment: string): string {
           number
           bestOf
         }
-        sets(page: $page, perPage: $perPage, sortType: CALL_ORDER) {
+        sets(page: $page, perPage: $perPage, sortType: ${sortType}) {
           pageInfo {
             total
             totalPages

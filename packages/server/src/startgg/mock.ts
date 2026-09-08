@@ -402,6 +402,47 @@ export class MockWorld {
     }
   }
 
+  /**
+   * Plays every bracket out to the end, which is what an event looks like by
+   * the time someone imports it for the results rather than to run it.
+   *
+   * Winners are decided by slot order rather than at random so a finished
+   * fixture is the same every run.
+   */
+  completeAll(): void {
+    // Each pass can only finish sets whose entrants are already known, so the
+    // bracket resolves a round at a time; the cap is a guard, not a limit.
+    for (let pass = 0; pass < 100; pass += 1) {
+      let moved = false;
+
+      for (const event of this.events) {
+        this.resolveSlots(event);
+        for (const set of event.sets) {
+          if (set.state === 3) continue;
+          const [a, b] = set.slots;
+          if (!a?.entrantId || !b?.entrantId) continue;
+
+          a.score = 2;
+          b.score = 1;
+          set.winnerId = a.entrantId;
+          set.state = 3;
+          set.startedAt = now() - 60;
+          set.completedAt = now();
+          set.updatedAt = now();
+          set.games = [
+            { id: `${set.id}-g1`, orderNum: 1, winnerId: a.entrantId },
+            { id: `${set.id}-g2`, orderNum: 2, winnerId: b.entrantId },
+            { id: `${set.id}-g3`, orderNum: 3, winnerId: a.entrantId },
+          ];
+          moved = true;
+        }
+        this.resolveSlots(event);
+      }
+
+      if (!moved) break;
+    }
+  }
+
   /** Advances the simulation one step. */
   tick(): void {
     for (const event of this.events) {
@@ -686,8 +727,15 @@ export class MockTransport implements GqlTransport {
         const event = eventById(vars.eventId);
         if (!event) throw new GqlError('Event not found', 'graphql');
         const updatedAfter = vars.updatedAfter == null ? null : Number(vars.updatedAfter);
+        const callOrder = sortTypeOf(request.query) === 'CALL_ORDER';
         const filtered = event.sets.filter(
-          (s) => updatedAfter === null || s.updatedAt > updatedAfter,
+          (s) =>
+            (updatedAfter === null || s.updatedAt > updatedAfter) &&
+            // Reproduces the trap this endpoint sets: the call order is the
+            // queue of sets still waiting for a station, so a set that has been
+            // played is simply not in it, and a finished event answers with
+            // nothing at all.
+            !(callOrder && s.state === 3),
         );
         const nodes = filtered.map((s) => setPayload(event, s));
         return {
@@ -706,8 +754,9 @@ export class MockTransport implements GqlTransport {
             (e.phases ?? []).some((p) => p.groups.some((g) => g.id === groupId)),
         );
         if (!event) throw new GqlError('Phase group not found', 'graphql');
+        const groupCallOrder = sortTypeOf(request.query) === 'CALL_ORDER';
         const nodes = event.sets
-          .filter((s) => s.phaseGroupId === groupId)
+          .filter((s) => s.phaseGroupId === groupId && !(groupCallOrder && s.state === 3))
           .map((s) => setPayload(event, s));
         return {
           phaseGroup: {
@@ -830,4 +879,9 @@ export class MockTransport implements GqlTransport {
 function inferOperation(query: string): string {
   const match = /(?:query|mutation)\s+(\w+)/.exec(query);
   return match?.[1] ?? 'Unknown';
+}
+
+/** The sort baked into a set query, or start.gg's own default when none is. */
+function sortTypeOf(query: string): string {
+  return /sortType:\s*(\w+)/.exec(query)?.[1] ?? 'CALL_ORDER';
 }

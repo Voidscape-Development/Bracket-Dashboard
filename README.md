@@ -271,6 +271,21 @@ each request to absorb clock skew between your machine and start.gg; the few set
 that get re-fetched are dropped by a content hash, so overlays only re-render when
 something a viewer can see actually changed.
 
+### Importing a tournament that is already over
+
+A finished bracket imports in full — every set with its winner, score and games —
+so results stay browsable long after the event. Two things make that work:
+
+- Set reads ask start.gg for `STANDARD` order, never `CALL_ORDER`. Call order is
+  the queue of sets waiting for a station, so a set that has been played is not
+  in it and start.gg leaves it out; a finished event asked that way answers with
+  nothing at all.
+- If an unfiltered read still comes back empty for an event that has brackets,
+  each phase group is read directly instead. An event holding no sets is also
+  re-read unfiltered on its next pass rather than waiting for the 15-minute
+  reconcile, which repairs a database imported before this was fixed — no need to
+  delete and re-add the tournament.
+
 ---
 
 ## Architecture

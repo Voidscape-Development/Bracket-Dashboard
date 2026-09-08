@@ -511,6 +511,18 @@ export class Store {
     return rows.map((r) => this.hydrateSet(r));
   }
 
+  /**
+   * How many sets an event has stored. The sync engine uses this to tell an
+   * event that has genuinely never had a bracket from one whose sets were
+   * missed, since only the latter can be repaired by re-reading.
+   */
+  countSets(eventId: Id): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS n FROM sets WHERE event_id = ?')
+      .get(eventId) as Row;
+    return Number(row?.n ?? 0);
+  }
+
   listSetsByPhaseGroup(phaseGroupId: Id): TournamentSet[] {
     const rows = this.db
       .prepare('SELECT * FROM sets WHERE phase_group_id = ? ORDER BY round, identifier')
