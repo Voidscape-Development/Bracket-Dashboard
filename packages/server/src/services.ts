@@ -70,6 +70,8 @@ export function createServices(config: AppConfig): Services {
 
   const client = new StartggClient(buildTransport(effective), {
     requestsPerMinute: effective.requestsPerMinute,
+    perPage: effective.perPage,
+    groupsPerPage: effective.groupsPerPage,
   });
   const hub = new Hub(store);
   const sync = new SyncEngine(store, client);

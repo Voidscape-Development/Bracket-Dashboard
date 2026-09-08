@@ -523,6 +523,16 @@ function setPayload(event: MockEvent, set: MockSet) {
   };
 }
 
+function groupPayload(phase: MockPhase, group: { id: string; displayIdentifier: string }) {
+  return {
+    id: group.id,
+    displayIdentifier: group.displayIdentifier,
+    bracketType: phase.bracketType,
+    state: 2,
+    rounds: [],
+  };
+}
+
 function paginate<T>(items: T[], page: number, perPage: number) {
   const start = (page - 1) * perPage;
   return {
@@ -573,8 +583,13 @@ export class MockTransport implements GqlTransport {
       case 'Healthcheck':
         return { __typename: 'Query' } as T;
 
-      case 'TournamentStructure': {
+      case 'TournamentStructure':
+      case 'TournamentEvents': {
         if (String(vars.slug) !== world.slug) return { tournament: null } as T;
+        // TournamentEvents is the split-read fallback: same tree, no groups.
+        const withGroups = op === 'TournamentStructure';
+        const groupPage = Number(vars.groupPage ?? 1);
+        const groupPerPage = Number(vars.groupPerPage ?? 32);
         return {
           tournament: {
             id: world.tournamentId,
@@ -610,19 +625,49 @@ export class MockTransport implements GqlTransport {
                 bracketType: phase.bracketType,
                 groupCount: phase.groups.length,
                 state: 2,
-                phaseGroups: {
-                  nodes: phase.groups.map((group) => ({
-                    id: group.id,
-                    displayIdentifier: group.displayIdentifier,
-                    bracketType: phase.bracketType,
-                    state: 2,
-                    rounds: [],
-                  })),
-                },
+                ...(withGroups
+                  ? {
+                      phaseGroups: paginate(
+                        phase.groups.map((group) => groupPayload(phase, group)),
+                        groupPage,
+                        groupPerPage,
+                      ),
+                    }
+                  : {}),
               })),
             })),
           },
         } as T;
+      }
+
+      case 'PhaseGroups': {
+        const phaseId = String(vars.phaseId);
+        for (const event of world.events) {
+          const phases =
+            event.phases ??
+            ([
+              {
+                id: event.phaseId,
+                name: 'Bracket',
+                order: 1,
+                bracketType: event.bracketType,
+                groups: [{ id: event.phaseGroupId, displayIdentifier: 'A' }],
+              },
+            ] as MockPhase[]);
+          const phase = phases.find((p) => p.id === phaseId);
+          if (!phase) continue;
+          return {
+            phase: {
+              id: phase.id,
+              phaseGroups: paginate(
+                phase.groups.map((group) => groupPayload(phase, group)),
+                Number(vars.page ?? 1),
+                Number(vars.perPage ?? 32),
+              ),
+            },
+          } as T;
+        }
+        throw new GqlError('Phase not found', 'graphql');
       }
 
       case 'EventEntrants': {
@@ -701,13 +746,15 @@ export class MockTransport implements GqlTransport {
             id: event.id,
             tournament: {
               id: world.tournamentId,
-              stations: {
-                nodes: Array.from({ length: 6 }, (_, i) => ({
+              stations: paginate(
+                Array.from({ length: 6 }, (_, i) => ({
                   id: `st${i + 1}`,
                   number: i + 1,
                   state: 1,
                 })),
-              },
+                Number(vars.page ?? 1),
+                Number(vars.perPage ?? 100),
+              ),
               streams: [
                 { id: 'stream1', streamName: 'MainStage', streamSource: 'TWITCH' },
               ],
