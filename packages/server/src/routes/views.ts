@@ -16,13 +16,16 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 import type { Services } from '../services.js';
+import { resolveView } from '../views/resolve.js';
 import { requirePermission, requireSignedIn } from './auth.js';
 
 const createViewSchema = z.object({
   name: z.string().min(1).max(80),
   kind: z.enum(VIEW_KINDS as unknown as [ViewKind, ...ViewKind[]]),
   eventId: z.string().nullable().optional(),
+  phaseId: z.string().nullable().optional(),
   phaseGroupId: z.string().nullable().optional(),
+  followActivePhase: z.boolean().optional(),
   themeId: z.string().optional(),
   width: z.number().int().min(100).max(7680).optional(),
   height: z.number().int().min(100).max(4320).optional(),
@@ -75,7 +78,9 @@ export function registerViewRoutes(app: FastifyInstance, services: Services): vo
       name: parsed.data.name,
       kind: parsed.data.kind,
       eventId: parsed.data.eventId ?? null,
+      phaseId: parsed.data.phaseId ?? null,
       phaseGroupId: parsed.data.phaseGroupId ?? null,
+      followActivePhase: parsed.data.followActivePhase ?? false,
       themeId: parsed.data.themeId,
       config: defaultConfigFor(parsed.data.kind),
       width: parsed.data.width,
@@ -94,7 +99,17 @@ export function registerViewRoutes(app: FastifyInstance, services: Services): vo
       // Only fields a client is allowed to set; secret and id are never taken
       // from the request.
       const patch: Record<string, unknown> = {};
-      for (const key of ['name', 'eventId', 'phaseGroupId', 'themeId', 'config', 'width', 'height']) {
+      for (const key of [
+        'name',
+        'eventId',
+        'phaseId',
+        'phaseGroupId',
+        'followActivePhase',
+        'themeId',
+        'config',
+        'width',
+        'height',
+      ]) {
         if (key in body) patch[key] = body[key];
       }
 
@@ -139,7 +154,9 @@ export function registerViewRoutes(app: FastifyInstance, services: Services): vo
         name: `${source.name} (copy)`,
         kind: source.kind,
         eventId: source.eventId,
+        phaseId: source.phaseId,
         phaseGroupId: source.phaseGroupId,
+        followActivePhase: source.followActivePhase,
         themeId: source.themeId,
         config: source.config,
         width: source.width,
@@ -298,18 +315,17 @@ export function registerViewRoutes(app: FastifyInstance, services: Services): vo
       return reply.code(404).send({ error: 'Unknown overlay' });
     }
 
+    const resolved = resolveView(store, view);
     const eventId = view.eventId as Id | null;
-    const sets = view.phaseGroupId
-      ? store.listSetsByPhaseGroup(view.phaseGroupId)
-      : eventId
-        ? store.listSets(eventId)
-        : [];
 
     return {
       view,
       theme: store.getTheme(view.themeId) ?? store.listThemes()[0] ?? null,
-      event: eventId ? store.getEvent(eventId) : null,
-      sets,
+      event: resolved.event,
+      phase: resolved.phase,
+      phaseGroup: resolved.phaseGroup,
+      bracketType: resolved.bracketType,
+      sets: resolved.sets,
       entrants: eventId ? store.listEntrants(eventId) : [],
       standings: eventId ? store.listStandings(eventId) : [],
       status: hub.connectionStatus,

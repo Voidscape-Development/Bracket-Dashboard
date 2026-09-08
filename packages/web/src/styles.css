@@ -579,8 +579,12 @@ a {
   height: 100%;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   position: relative;
+}
+
+.bd-match__slots {
+  flex: 0 0 auto;
 }
 
 .bd-match[role='button'] {
@@ -682,6 +686,10 @@ a {
   gap: 4px;
   padding: 3px var(--bd-match-padding) 5px;
   flex-wrap: wrap;
+  align-items: center;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .bd-badge {
@@ -840,6 +848,103 @@ a {
   height: 100vh;
   overflow: hidden;
   font-family: var(--bd-font-family);
+  position: relative;
+}
+
+/* Optional background art, painted behind the frame at its own opacity so it
+   never fights the bracket for contrast. */
+.overlay-root::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: var(--bd-background-image, none);
+  background-size: var(--bd-background-size, cover);
+  background-position: var(--bd-background-position, center);
+  opacity: var(--bd-background-opacity, 1);
+  pointer-events: none;
+}
+
+/* Matches and labels outside the current shot. The bracket stays legible as a
+   whole while the camera makes clear what to look at. */
+.bd-dimmed {
+  opacity: var(--bd-dimmed-opacity, 0.16);
+  transition: opacity var(--bd-camera-duration-ms, 650ms) ease;
+}
+
+.bd-node,
+.bd-round-label {
+  transition: opacity var(--bd-camera-duration-ms, 650ms) ease;
+}
+
+.bd-match--focus {
+  outline: var(--bd-focus-accent-width, 2px) solid var(--bd-focus-accent, #f5b32a);
+  outline-offset: 1px;
+}
+
+/* ----------------------------------------------------------------- frame -- */
+
+.ov-frame {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bd-title-gap, 10px);
+  padding: var(--bd-frame-padding, 0px);
+}
+
+.ov-frame--bare {
+  gap: 0;
+  padding: 0;
+}
+
+.ov-frame__title {
+  flex: 0 0 auto;
+  height: var(--bd-title-height, 58px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--bd-title-background, rgba(8, 6, 4, 0.95));
+  border-radius: var(--bd-frame-radius, 14px);
+  color: var(--bd-title-color, #fff);
+  font-family: var(--bd-font-family-display, var(--bd-font-family));
+  font-size: var(--bd-title-font-size, 26px);
+  font-weight: var(--bd-title-font-weight, 800);
+  letter-spacing: var(--bd-title-letter-spacing, 0.01em);
+  text-transform: var(--bd-title-text-transform, uppercase);
+  box-shadow: var(--bd-frame-shadow, none);
+  padding: 0 24px;
+  text-align: center;
+}
+
+.ov-frame__title-lead {
+  color: var(--bd-title-accent, #f5b32a);
+}
+
+.ov-frame__title-sep {
+  color: var(--bd-title-color, #fff);
+  opacity: 0.75;
+}
+
+.ov-frame__panel {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--bd-frame-background, rgba(12, 9, 6, 0.88));
+  border: var(--bd-frame-border-width, 1px) solid var(--bd-frame-border, transparent);
+  border-radius: var(--bd-frame-radius, 14px);
+  box-shadow: var(--bd-frame-shadow, none);
+}
+
+.ov-frame__panel--bare {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.ov-frame--bare > .ov-frame__panel {
+  border-radius: 0;
 }
 
 .overlay-message {

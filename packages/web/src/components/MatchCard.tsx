@@ -14,7 +14,26 @@ export interface MatchCardProps {
   dimCompleted: boolean;
   highlightLive: boolean;
   selected?: boolean;
+  /** The match the overlay camera is centred on; outlined with the focus accent. */
+  cameraTarget?: boolean;
+  /** Set id -> short match identifier, for readable "Winner of …" placeholders. */
+  feederLabels?: Map<string, string>;
   onClick?: (set: TournamentSet) => void;
+}
+
+/**
+ * Text for an unresolved slot. Prefers the feeding match's short identifier over
+ * the raw set id start.gg puts in the placeholder.
+ */
+function placeholderFor(
+  slot: TournamentSet['slots'][number],
+  feederLabels: Map<string, string> | undefined,
+): string {
+  if (slot.prereqType === 'set' && slot.prereqId) {
+    const label = feederLabels?.get(String(slot.prereqId));
+    if (label) return `Winner of ${label}`;
+  }
+  return slot.placeholderText ?? 'TBD';
 }
 
 /** start.gg encodes a disqualification as a score of -1. */
@@ -33,6 +52,8 @@ export function MatchCard({
   dimCompleted,
   highlightLive,
   selected,
+  cameraTarget,
+  feederLabels,
   onClick,
 }: MatchCardProps) {
   const isLive = set.state === ActivityState.Active || set.state === ActivityState.Called;
@@ -44,6 +65,7 @@ export function MatchCard({
     isDone ? 'bd-match--done' : '',
     isDone && dimCompleted ? 'bd-match--dim' : '',
     selected ? 'bd-match--selected' : '',
+    cameraTarget ? 'bd-match--focus' : '',
     set.pendingLocal ? 'bd-match--pending' : '',
   ]
     .filter(Boolean)
@@ -87,7 +109,7 @@ export function MatchCard({
                 <span className="bd-slot__seed">{slot.seed}</span>
               )}
               <span className="bd-slot__name" title={slot.entrantName ?? undefined}>
-                {slot.entrantName ?? slot.placeholderText ?? 'TBD'}
+                {slot.entrantName ?? placeholderFor(slot, feederLabels)}
               </span>
               {showScores && (
                 <span className="bd-slot__score">{formatScore(slot.score)}</span>

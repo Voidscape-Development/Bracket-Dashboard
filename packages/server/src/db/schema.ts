@@ -210,6 +210,17 @@ export const MIGRATIONS: Migration[] = [
   },
 ];
 
+MIGRATIONS.push({
+  version: 2,
+  name: 'view-phase-targeting',
+  up: `
+    -- An event's phases have unrelated round numbering, so a bracket view has
+    -- to name the phase it renders rather than pooling every set in the event.
+    ALTER TABLE views ADD COLUMN phase_id TEXT;
+    ALTER TABLE views ADD COLUMN follow_active_phase INTEGER NOT NULL DEFAULT 0;
+  `,
+});
+
 export function migrate(db: BetterSqlite3.Database): number {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');

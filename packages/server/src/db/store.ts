@@ -682,7 +682,9 @@ export class Store {
     name: string;
     kind: ViewKind;
     eventId: Id | null;
+    phaseId?: Id | null;
     phaseGroupId: Id | null;
+    followActivePhase?: boolean;
     themeId?: string;
     config?: ViewConfig;
     width?: number;
@@ -694,7 +696,9 @@ export class Store {
       kind: input.kind,
       secret: randomUUID().replace(/-/g, ''),
       eventId: input.eventId,
+      phaseId: input.phaseId ?? null,
       phaseGroupId: input.phaseGroupId,
+      followActivePhase: input.followActivePhase ?? false,
       themeId: input.themeId ?? 'startgg-dark',
       config: input.config ?? defaultConfigFor(input.kind),
       camera: { ...DEFAULT_CAMERA },
@@ -711,13 +715,16 @@ export class Store {
   private writeView(view: OutputView): void {
     this.db
       .prepare(
-        `INSERT INTO views (id, name, kind, secret, event_id, phase_group_id, theme_id,
+        `INSERT INTO views (id, name, kind, secret, event_id, phase_id, phase_group_id,
+                            follow_active_phase, theme_id,
                             config_json, camera_json, autofollow_json, width, height,
                             created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name, kind = excluded.kind, event_id = excluded.event_id,
-           phase_group_id = excluded.phase_group_id, theme_id = excluded.theme_id,
+           phase_id = excluded.phase_id, phase_group_id = excluded.phase_group_id,
+           follow_active_phase = excluded.follow_active_phase,
+           theme_id = excluded.theme_id,
            config_json = excluded.config_json, camera_json = excluded.camera_json,
            autofollow_json = excluded.autofollow_json, width = excluded.width,
            height = excluded.height, updated_at = excluded.updated_at`,
@@ -728,7 +735,9 @@ export class Store {
         view.kind,
         view.secret,
         view.eventId,
+        view.phaseId,
         view.phaseGroupId,
+        view.followActivePhase ? 1 : 0,
         view.themeId,
         JSON.stringify(view.config),
         JSON.stringify(view.camera),
@@ -748,7 +757,9 @@ export class Store {
       kind,
       secret: row.secret,
       eventId: row.event_id,
+      phaseId: row.phase_id ?? null,
       phaseGroupId: row.phase_group_id,
+      followActivePhase: !!row.follow_active_phase,
       themeId: row.theme_id,
       config: json(row.config_json, defaultConfigFor(kind)),
       camera: { ...DEFAULT_CAMERA, ...json<Partial<CameraState>>(row.camera_json, {}) },

@@ -27,6 +27,12 @@ camera, theme and auto-follow settings. The stream overlay can punch in on grand
 finals while the lobby TV shows the whole bracket — same event, same server, no
 interference.
 
+**Punch in like a camera, not a crop.** Focusing a match fades the rest of the
+bracket back rather than slicing it at the frame edge, so viewers keep their
+bearings. Short moves glide; long jumps (winners to losers) cut through a
+cross-fade instead of swooping across the whole bracket. Optional titled frame
+chrome stays fixed while the bracket moves inside it.
+
 **Report scores back to start.gg.** Score reporting, per-game logs, DQs, set
 resets, and setup/stream assignment. Everything is queued locally first, so a
 Wi-Fi drop at the venue never stops the desk.
@@ -55,8 +61,9 @@ recovered, only reset.
 node packages/server/dist/bin/serve.js --mock
 ```
 
-Mock mode runs a simulated 3-event tournament (double elim, round robin, single
-elim) whose matches progress on a timer. Import
+Mock mode runs a simulated 4-event tournament — double elim, round robin, single
+elim, and a two-phase event (round robin pools feeding a single elim top cut) —
+whose matches progress on a timer. Import
 `https://www.start.gg/tournament/bracket-dashboard-demo` and everything —
 overlays, the director, reporting, conflicts — works with no network at all. Good
 for laying out your OBS scenes the night before.
@@ -96,10 +103,34 @@ overlay animates to it immediately. For an unattended display, turn on
 **Auto-follow** instead and it will track live matches on its own; taking manual
 control pauses the automation for a grace period, then it resumes.
 
+The **Presentation** section of the director panel controls the frame, the title
+bar, whether punching in dims or crops, and how the camera moves between shots.
+
 Want the same bracket on a TV as well? **Duplicate** the output. The copy has its
 own URL and camera, so the two never fight.
 
 ---
+
+## Events with multiple phases
+
+Most non-trivial events run pools and then a top cut. Each phase numbers its
+rounds from 1, so a "round 1" in pools and a "round 1" in the cut are unrelated —
+rendering them together would interleave into nonsense. A bracket therefore shows
+exactly **one phase at a time**, and the server decides which one in a single
+place that the dashboard, the overlays and auto-follow all share.
+
+When creating an output you pick:
+
+- **A specific phase** — pin a display to Pools or to Top Cut.
+- **Follow whichever phase is live** (the default) — the display walks itself from
+  pools into the top cut as the event progresses. This is what you want on an
+  unattended venue TV.
+
+If the chosen phase has several pools, pin one or leave it on **busiest pool**,
+which tracks wherever play is actually happening. The dashboard's event page has
+the same picker, listing every phase and pool, and renders each with the right
+view: a standings table plus head-to-head grid for round robin pools, a tree for
+the cut.
 
 ## Reporting and offline behaviour
 

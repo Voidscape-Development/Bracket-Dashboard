@@ -25,6 +25,7 @@ import {
 import type { WebSocket } from 'ws';
 
 import type { Store } from '../db/store.js';
+import { resolveView } from '../views/resolve.js';
 
 type ClientKind = 'dashboard' | 'view';
 
@@ -304,9 +305,9 @@ export class Hub {
       if ((this.manualHoldUntil.get(view.id) ?? 0) > now) continue;
       if (!view.eventId) continue;
 
-      const sets = view.phaseGroupId
-        ? this.store.listSetsByPhaseGroup(view.phaseGroupId)
-        : this.store.listSets(view.eventId);
+      // Same resolution the overlay uses, so auto-follow never picks a match
+      // from a phase the display is not showing.
+      const { sets } = resolveView(this.store, view);
       if (sets.length === 0) continue;
 
       const previous = this.lastAutoTarget.get(view.id) ?? view.camera.targetSetId;

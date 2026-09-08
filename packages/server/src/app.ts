@@ -24,6 +24,7 @@ import { registerReportingRoutes } from './routes/reporting.js';
 import { registerTournamentRoutes } from './routes/tournaments.js';
 import { registerViewRoutes } from './routes/views.js';
 import type { Services } from './services.js';
+import { resolveView } from './views/resolve.js';
 
 export interface BootstrapCredentials {
   username: string;
@@ -88,19 +89,18 @@ function handleClientMessage(services: Services, clientId: string, raw: string):
         });
         return;
       }
+      const resolved = resolveView(store, view);
       const eventId = view.eventId as Id | null;
-      const sets = view.phaseGroupId
-        ? store.listSetsByPhaseGroup(view.phaseGroupId)
-        : eventId
-          ? store.listSets(eventId)
-          : [];
 
       hub.sendTo(clientId, {
         type: 'view:snapshot',
         view,
         theme: store.getTheme(view.themeId) ?? store.listThemes()[0]!,
-        event: eventId ? store.getEvent(eventId) : null,
-        sets,
+        event: resolved.event,
+        phase: resolved.phase,
+        phaseGroup: resolved.phaseGroup,
+        bracketType: resolved.bracketType,
+        sets: resolved.sets,
         entrants: eventId ? store.listEntrants(eventId) : [],
         standings: eventId ? store.listStandings(eventId) : [],
         status: hub.connectionStatus,
@@ -175,7 +175,11 @@ export async function buildApp(services: Services): Promise<FastifyInstance> {
 
   const webRoot = services.config.webRoot;
   if (webRoot && existsSync(webRoot)) {
-    await app.register(fastifyStatic, { root: webRoot, wildcard: false });
+    // `wildcard: true` resolves files per request. The alternative indexes the
+    // directory once at boot, which silently stops serving any asset added
+    // afterwards — exactly what happens when the app is rebuilt or upgraded
+    // while the server is running.
+    await app.register(fastifyStatic, { root: webRoot, wildcard: true });
 
     // SPA fallback: anything that is not an API route or a real file serves the
     // app shell, so deep links like /views/abc/director survive a refresh.

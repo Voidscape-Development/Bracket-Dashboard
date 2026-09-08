@@ -122,27 +122,37 @@ export function ViewsPage() {
   );
 }
 
+interface EventOption {
+  id: Id;
+  label: string;
+  event: {
+    phases: { id: Id; name: string; groups: { id: Id; displayIdentifier: string }[] }[];
+  };
+}
+
 function CreateViewForm({
   events,
   themes,
   onCreated,
 }: {
-  events: { id: Id; label: string; event: { phases: { name: string; groups: { id: Id; displayIdentifier: string }[] }[] } }[];
+  events: EventOption[];
   themes: { id: string; name: string }[];
   onCreated: () => void;
 }) {
   const [name, setName] = useState('');
   const [kind, setKind] = useState<ViewKind>('bracket');
   const [eventId, setEventId] = useState<Id | ''>(events[0]?.id ?? '');
+  /** '' = no phase chosen yet, 'auto' = follow whichever phase is live. */
+  const [phaseId, setPhaseId] = useState<Id | 'auto' | ''>('auto');
   const [groupId, setGroupId] = useState<Id | ''>('');
   const [themeId, setThemeId] = useState(themes[0]?.id ?? 'startgg-dark');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const selected = events.find((e) => e.id === eventId);
-  const groups = selected?.event.phases.flatMap((p) =>
-    p.groups.map((g) => ({ id: g.id, label: `${p.name} — ${g.displayIdentifier}` })),
-  ) ?? [];
+  const phases = selected?.event.phases ?? [];
+  const activePhase = phases.find((p) => p.id === phaseId);
+  const groups = activePhase?.groups ?? [];
 
   const submit = async () => {
     setBusy(true);
@@ -152,7 +162,9 @@ function CreateViewForm({
         name: name.trim() || KIND_LABELS[kind],
         kind,
         eventId: eventId || null,
+        phaseId: phaseId === 'auto' || phaseId === '' ? null : phaseId,
         phaseGroupId: groupId || null,
+        followActivePhase: phaseId === 'auto',
         themeId,
       });
       onCreated();
@@ -201,6 +213,7 @@ function CreateViewForm({
           value={eventId}
           onChange={(e) => {
             setEventId(e.target.value);
+            setPhaseId('auto');
             setGroupId('');
           }}
         >
@@ -213,17 +226,45 @@ function CreateViewForm({
         </select>
       </div>
 
+      <div className="field">
+        <label className="field__label">Phase</label>
+        <select
+          className="select"
+          value={phaseId}
+          onChange={(e) => {
+            setPhaseId(e.target.value as Id | 'auto');
+            setGroupId('');
+          }}
+        >
+          <option value="auto">Follow whichever phase is live</option>
+          {phases.map((phase) => (
+            <option key={phase.id} value={phase.id}>
+              {phase.name}
+            </option>
+          ))}
+        </select>
+        <span className="field__hint">
+          Phases number their rounds separately, so a bracket shows one phase at a
+          time. "Follow whichever phase is live" walks a display from pools into top
+          cut on its own — the right choice for an unattended TV.
+        </span>
+      </div>
+
       {groups.length > 1 && (
         <div className="field">
-          <label className="field__label">Bracket (optional)</label>
+          <label className="field__label">Pool</label>
           <select className="select" value={groupId} onChange={(e) => setGroupId(e.target.value)}>
-            <option value="">All brackets in the event</option>
+            <option value="">Busiest pool</option>
             {groups.map((group) => (
               <option key={group.id} value={group.id}>
-                {group.label}
+                Pool {group.displayIdentifier}
               </option>
             ))}
           </select>
+          <span className="field__hint">
+            This phase has {groups.length} pools. Leave on "busiest" to track wherever
+            play is happening, or pin one for a dedicated display.
+          </span>
         </div>
       )}
 
@@ -254,13 +295,18 @@ function ViewCard({
 }: {
   view: OutputView;
   viewerCount: number;
-  events: { id: Id; label: string }[];
+  events: EventOption[];
   canManage: boolean;
   onChanged: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const url = `${window.location.origin}${overlayPath(view)}`;
   const eventLabel = events.find((e) => e.id === view.eventId)?.label ?? 'No event selected';
+  const phaseLabel = view.followActivePhase
+    ? 'Live phase'
+    : (events.find((e) => e.id === view.eventId)?.event.phases ?? []).find(
+          (p) => p.id === view.phaseId,
+        )?.name ?? null;
 
   const copy = async () => {
     try {
@@ -280,6 +326,7 @@ function ViewCard({
         <span className="tag">{KIND_LABELS[view.kind]}</span>
         {viewerCount > 0 && <span className="tag tag--live">{viewerCount} connected</span>}
         {view.autoFollow.enabled && <span className="tag">Auto-follow</span>}
+        {phaseLabel && <span className="tag">{phaseLabel}</span>}
       </div>
 
       <p className="muted" style={{ fontSize: 12, margin: '0 0 10px' }}>

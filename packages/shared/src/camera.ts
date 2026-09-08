@@ -130,6 +130,62 @@ export function resolveCamera(
   };
 }
 
+/**
+ * The set ids the current shot is *about*. In `dim` focus mode everything stays
+ * on screen and anything outside this list is faded back, which reads far better
+ * on stream than cropping neighbouring matches at the frame edge.
+ *
+ * Returns null for a full-bracket shot, meaning "nothing is dimmed".
+ */
+export function focusedSetIds(
+  layout: EliminationLayout,
+  camera: CameraState,
+): Set<Id> | null {
+  switch (camera.mode) {
+    case 'match':
+      return camera.targetSetId ? new Set([camera.targetSetId]) : null;
+
+    case 'progression': {
+      if (!camera.targetSetId) return null;
+      const nodes = progressionFrom(layout, camera.targetSetId, camera.progressionDepth);
+      return nodes.length > 0 ? new Set(nodes.map((n) => n.setId)) : null;
+    }
+
+    case 'column': {
+      const column = layout.columns.find((c) => c.id === camera.targetColumnId);
+      return column ? new Set(column.setIds) : null;
+    }
+
+    case 'fit':
+    case 'manual':
+    default:
+      return null;
+  }
+}
+
+/**
+ * Whether moving between two shots should cut through a fade rather than glide.
+ * A pan across a whole bracket takes an age and reads as a lurch; a pan between
+ * neighbouring rounds reads as intent. The threshold is in viewport widths.
+ */
+export function shouldFade(
+  from: CameraTransform | null,
+  to: CameraTransform,
+  viewport: Viewport,
+  thresholdViewports = 1.1,
+): boolean {
+  if (!from) return false;
+  const dx = (to.centerX - from.centerX) * to.zoom;
+  const dy = (to.centerY - from.centerY) * to.zoom;
+  const distance = Math.hypot(dx, dy);
+  const zoomRatio = Math.max(to.zoom / from.zoom, from.zoom / to.zoom);
+  return (
+    distance > viewport.width * thresholdViewports ||
+    // A large zoom swing is just as disorienting as a long pan.
+    zoomRatio > 2.5
+  );
+}
+
 /** A set is "interesting" to auto-follow when it is live or has been called. */
 function isLive(set: TournamentSet): boolean {
   return set.state === ActivityState.Active || set.state === ActivityState.Called;

@@ -12,10 +12,14 @@ import {
   ActivityState,
   layoutElimination,
   type AutoFollowRule,
+  type BracketType,
   type BracketViewConfig,
   type CameraMode,
+  type Entrant,
+  type FocusMode,
   type Id,
   type OutputView,
+  type ShotTransition,
   type TournamentSet,
 } from '@bracket/shared';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -37,9 +41,16 @@ export function DirectorPage() {
 
   const view = views.find((v) => v.id === viewId) ?? null;
   const setsMap = useAppStore((s) => (view?.eventId ? s.setsByEvent[view.eventId] : undefined));
-  const entrants = useAppStore((s) => (view?.eventId ? s.entrantsByEvent[view.eventId] : undefined));
 
   const [error, setError] = useState<string | null>(null);
+  // The director previews through the overlay's own resolved payload, so what an
+  // operator lines up here is provably what the browser source renders.
+  const [resolved, setResolved] = useState<{
+    sets: TournamentSet[];
+    entrants: Entrant[];
+    bracketType: BracketType;
+    phaseName: string | null;
+  } | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -61,12 +72,35 @@ export function DirectorPage() {
       .catch(() => setError('Could not load the event for this output'));
   }, [view?.eventId, loadEvent]);
 
-  const sets = useMemo(() => {
-    const all = Object.values(setsMap ?? {});
-    if (!view?.phaseGroupId) return all;
-    const scoped = all.filter((s) => s.phaseGroupId === view.phaseGroupId);
-    return scoped.length > 0 ? scoped : all;
-  }, [setsMap, view?.phaseGroupId]);
+  const refreshResolved = useCallback(async () => {
+    if (!view) return;
+    try {
+      const payload = await api.overlay(view.id, view.secret);
+      setResolved({
+        sets: payload.sets,
+        entrants: payload.entrants,
+        bracketType: payload.bracketType,
+        phaseName: payload.phase?.name ?? null,
+      });
+    } catch {
+      setError('Could not resolve what this output is showing');
+    }
+  }, [view]);
+
+  useEffect(() => {
+    void refreshResolved();
+  }, [refreshResolved]);
+
+  // Live set changes arrive on the shared socket; re-resolve so the preview and
+  // the shot list stay current without polling.
+  useEffect(() => {
+    if (!setsMap) return;
+    void refreshResolved();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setsMap]);
+
+  const sets = resolved?.sets ?? [];
+  const entrants = resolved?.entrants ?? [];
 
   const theme = themes.find((t) => t.id === view?.themeId) ?? themes[0] ?? null;
 
@@ -108,6 +142,8 @@ export function DirectorPage() {
         </Link>
         <strong>{view.name}</strong>
         <span className="tag">{view.kind}</span>
+        {resolved?.phaseName && <span className="tag">{resolved.phaseName}</span>}
+        {view.followActivePhase && <span className="tag">follows live phase</span>}
         <span className="spacer" />
         <span className="muted" style={{ fontSize: 12 }}>
           {view.camera.mode === 'fit'
@@ -175,6 +211,8 @@ export function DirectorPage() {
             Animate between shots
           </label>
 
+          <PresentationControls view={view} config={config} onChanged={upsertView} />
+
           <AutoFollowControls view={view} sets={sets} onChanged={upsertView} />
 
           <h3 className="panel__title" style={{ marginTop: 18 }}>
@@ -196,6 +234,7 @@ export function DirectorPage() {
           </h3>
           <ColumnList
             sets={sets}
+            bracketType={resolved?.bracketType ?? 'DOUBLE_ELIMINATION'}
             activeColumnId={view.camera.targetColumnId}
             onPick={(columnId) => setCamera({ mode: 'column', targetColumnId: columnId })}
           />
@@ -206,8 +245,8 @@ export function DirectorPage() {
             {isBracket ? (
               <BracketCanvas
                 sets={sets}
-                bracketType="DOUBLE_ELIMINATION"
-                entrants={entrants ?? []}
+                bracketType={resolved?.bracketType ?? 'DOUBLE_ELIMINATION'}
+                entrants={entrants}
                 config={config}
                 camera={view.camera}
                 selectedSetId={view.camera.targetSetId}
@@ -419,16 +458,18 @@ function ShotList({
 
 function ColumnList({
   sets,
+  bracketType,
   activeColumnId,
   onPick,
 }: {
   sets: TournamentSet[];
+  bracketType: BracketType;
   activeColumnId: string | null;
   onPick: (columnId: string) => void;
 }) {
   const layout = useMemo(
-    () => layoutElimination({ sets, bracketType: 'DOUBLE_ELIMINATION' }),
-    [sets],
+    () => layoutElimination({ sets, bracketType }),
+    [sets, bracketType],
   );
 
   return (
@@ -444,5 +485,105 @@ function ColumnList({
         </button>
       ))}
     </div>
+  );
+}
+
+
+/**
+ * Presentation: the fixed frame, the title bar, and how a punch-in treats the
+ * rest of the bracket. These are per-output, so a stream overlay can be framed
+ * and titled while a lobby TV stays bare.
+ */
+function PresentationControls({
+  view,
+  config,
+  onChanged,
+}: {
+  view: OutputView;
+  config: BracketViewConfig;
+  onChanged: (view: OutputView) => void;
+}) {
+  const update = (patch: Partial<BracketViewConfig>) => {
+    const next = { ...config, ...patch };
+    onChanged({ ...view, config: next });
+    void api.updateView(view.id, { config: next }).catch(() => undefined);
+  };
+
+  return (
+    <>
+      <h3 className="panel__title" style={{ marginTop: 18 }}>
+        Presentation
+      </h3>
+
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={config.showFrame}
+          onChange={(e) => update({ showFrame: e.target.checked })}
+        />
+        Draw the frame panel
+      </label>
+
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={config.showTitle}
+          onChange={(e) => update({ showTitle: e.target.checked })}
+        />
+        Show a title bar
+      </label>
+
+      {config.showTitle && (
+        <div className="field">
+          <input
+            className="input"
+            value={config.title}
+            placeholder="MY MAJOR | MELEE TOP 8"
+            onChange={(e) => update({ title: e.target.value })}
+          />
+          <span className="field__hint">
+            Text before the first “|” takes the accent colour.
+          </span>
+        </div>
+      )}
+
+      <div className="field">
+        <label className="field__label">When punched in</label>
+        <select
+          className="select"
+          value={config.focusMode}
+          onChange={(e) => update({ focusMode: e.target.value as FocusMode })}
+        >
+          <option value="dim">Fade the rest of the bracket</option>
+          <option value="crop">Crop to the shot</option>
+        </select>
+        <span className="field__hint">
+          Fading keeps viewers oriented; cropping is tighter when screen space is
+          scarce.
+        </span>
+      </div>
+
+      <div className="field">
+        <label className="field__label">Moving between shots</label>
+        <select
+          className="select"
+          value={config.transition}
+          onChange={(e) => update({ transition: e.target.value as ShotTransition })}
+        >
+          <option value="auto">Glide when close, cut when far</option>
+          <option value="pan">Always glide</option>
+          <option value="fade">Always cut through a fade</option>
+        </select>
+      </div>
+
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={config.highlightFocused}
+          onChange={(e) => update({ highlightFocused: e.target.checked })}
+        />
+        Outline the focused match
+      </label>
+    </>
   );
 }

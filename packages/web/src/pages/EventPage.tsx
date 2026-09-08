@@ -67,9 +67,14 @@ export function EventPage() {
     const all = Object.values(setsMap ?? {});
     if (!groupId) return all;
     const scoped = all.filter((s) => s.phaseGroupId === groupId);
-    // Some events report no phase group on sets; fall back rather than blank.
-    return scoped.length > 0 ? scoped : all;
-  }, [setsMap, groupId]);
+    if (scoped.length > 0) return scoped;
+
+    // Some events report no phase group on their sets. Fall back to the phase,
+    // never to the whole event: phases number rounds independently, so mixing
+    // them would interleave pool round 1 with top-cut round 1.
+    const phaseId = groups.find((g) => g.group.id === groupId)?.phase.id;
+    return phaseId ? all.filter((s) => s.phaseId === phaseId) : [];
+  }, [setsMap, groupId, groups]);
 
   if (error) {
     return (

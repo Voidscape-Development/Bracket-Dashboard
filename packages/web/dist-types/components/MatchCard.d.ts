@@ -12,7 +12,11 @@ export interface MatchCardProps {
     dimCompleted: boolean;
     highlightLive: boolean;
     selected?: boolean;
+    /** The match the overlay camera is centred on; outlined with the focus accent. */
+    cameraTarget?: boolean;
+    /** Set id -> short match identifier, for readable "Winner of …" placeholders. */
+    feederLabels?: Map<string, string>;
     onClick?: (set: TournamentSet) => void;
 }
-export declare function MatchCard({ set, showSeeds, showScores, showStation, showStream, dimCompleted, highlightLive, selected, onClick, }: MatchCardProps): import("react").JSX.Element;
+export declare function MatchCard({ set, showSeeds, showScores, showStation, showStream, dimCompleted, highlightLive, selected, cameraTarget, feederLabels, onClick, }: MatchCardProps): import("react").JSX.Element;
 //# sourceMappingURL=MatchCard.d.ts.map

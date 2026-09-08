@@ -5,7 +5,7 @@
  * messages end up in front of a tournament organiser mid-event, so a raw status
  * code is not good enough.
  */
-import type { ConflictResolution, Entrant, EventStatus, Id, OutboxEntry, OutputView, ReportCommand, SessionUser, Standing, Theme, Tournament, TournamentEvent, TournamentSet, User, ViewKind } from '@bracket/shared';
+import type { BracketType, ConflictResolution, Entrant, EventStatus, Id, OutboxEntry, OutputView, Phase, PhaseGroup, ReportCommand, SessionUser, Standing, Theme, Tournament, TournamentEvent, TournamentSet, User, ViewKind } from '@bracket/shared';
 export declare class ApiError extends Error {
     readonly status: number;
     readonly detail?: unknown | undefined;
@@ -94,7 +94,9 @@ export declare const api: {
         name: string;
         kind: ViewKind;
         eventId: Id | null;
+        phaseId?: Id | null;
         phaseGroupId: Id | null;
+        followActivePhase?: boolean;
         themeId?: string;
         width?: number;
         height?: number;
@@ -166,6 +168,9 @@ export declare const api: {
         view: OutputView;
         theme: Theme;
         event: TournamentEvent | null;
+        phase: Phase | null;
+        phaseGroup: PhaseGroup | null;
+        bracketType: BracketType;
         sets: TournamentSet[];
         entrants: Entrant[];
         standings: Standing[];

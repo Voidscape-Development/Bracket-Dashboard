@@ -43,20 +43,29 @@ test('importing a tournament stores every event, bracket and set', async () => {
 
   const result = await sync.importTournament(world.slug);
   assert.ok(result);
-  assert.equal(result.events, 3);
+  assert.equal(result.events, 4);
 
   const tournaments = store.listTournaments();
   assert.equal(tournaments.length, 1);
 
   const events = store.listEvents();
-  assert.equal(events.length, 3);
+  assert.equal(events.length, 4);
 
   const bracketTypes = events.map((e) => e.phases[0]?.bracketType).sort();
   assert.deepEqual(bracketTypes, [
     'DOUBLE_ELIMINATION',
     'ROUND_ROBIN',
+    'ROUND_ROBIN',
     'SINGLE_ELIMINATION',
   ]);
+
+  // The multi-phase event keeps both of its phases.
+  const multi = events.find((e) => e.phases.length > 1);
+  assert.ok(multi, 'the pools-into-top-cut event survived the import');
+  assert.deepEqual(
+    multi.phases.map((p) => p.bracketType),
+    ['ROUND_ROBIN', 'SINGLE_ELIMINATION'],
+  );
 
   // The double elim event carries the full 8-entrant bracket.
   const main = events.find((e) => e.phases[0]?.bracketType === 'DOUBLE_ELIMINATION');
@@ -143,14 +152,14 @@ test('sync tiers adapt to what the event is doing', async () => {
   sync.refreshTrackedEvents();
 
   const states = sync.listStates();
-  assert.equal(states.length, 3, 'every imported event is tracked');
+  assert.equal(states.length, 4, 'every imported event is tracked');
   assert.ok(states.every((s) => s.nextRunAt > 0));
 
   // Untracking an event removes it from the loop.
   const eventId = store.listEvents()[0]!.id;
   store.setEventTracked(eventId, false);
   sync.refreshTrackedEvents();
-  assert.equal(sync.listStates().length, 2);
+  assert.equal(sync.listStates().length, 3);
 });
 
 test('event status counts reflect the bracket', async () => {
@@ -158,7 +167,7 @@ test('event status counts reflect the bracket', async () => {
   await sync.importTournament(world.slug);
 
   const statuses = store.eventStatuses();
-  assert.equal(statuses.length, 3);
+  assert.equal(statuses.length, 4);
   for (const status of statuses) {
     assert.equal(
       status.totalSets,

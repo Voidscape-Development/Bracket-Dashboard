@@ -7,12 +7,15 @@
  */
 
 import type {
+  BracketType,
   ConflictResolution,
   Entrant,
   EventStatus,
   Id,
   OutboxEntry,
   OutputView,
+  Phase,
+  PhaseGroup,
   ReportCommand,
   SessionUser,
   Standing,
@@ -173,7 +176,9 @@ export const api = {
     name: string;
     kind: ViewKind;
     eventId: Id | null;
+    phaseId?: Id | null;
     phaseGroupId: Id | null;
+    followActivePhase?: boolean;
     themeId?: string;
     width?: number;
     height?: number;
@@ -230,6 +235,9 @@ export const api = {
       view: OutputView;
       theme: Theme;
       event: TournamentEvent | null;
+      phase: Phase | null;
+      phaseGroup: PhaseGroup | null;
+      bracketType: BracketType;
       sets: TournamentSet[];
       entrants: Entrant[];
       standings: Standing[];

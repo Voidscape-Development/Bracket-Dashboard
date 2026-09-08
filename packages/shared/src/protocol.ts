@@ -9,9 +9,12 @@
 
 import type { OutboxEntry } from './commands.js';
 import type {
+  BracketType,
   Entrant,
   EventStatus,
   Id,
+  Phase,
+  PhaseGroup,
   Standing,
   TournamentEvent,
   TournamentSet,
@@ -84,6 +87,11 @@ export interface ViewSnapshotMessage {
   view: OutputView;
   theme: Theme;
   event: TournamentEvent | null;
+  /** The phase this view resolved to; overlays never pick one themselves. */
+  phase: Phase | null;
+  phaseGroup: PhaseGroup | null;
+  /** Authoritative bracket type for the renderer, not inferred from the sets. */
+  bracketType: BracketType;
   sets: TournamentSet[];
   entrants: Entrant[];
   standings: Standing[];

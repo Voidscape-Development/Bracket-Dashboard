@@ -38,6 +38,11 @@ const COLOR_TOKENS: [TokenKey, string][] = [
   ['pending', 'Badge background'],
   ['connectorColor', 'Connector'],
   ['connectorLoserColor', 'Losers connector'],
+  ['frameBackground', 'Frame panel'],
+  ['titleBackground', 'Title bar'],
+  ['titleColor', 'Title text'],
+  ['titleAccent', 'Title accent'],
+  ['focusAccent', 'Focus outline'],
 ];
 
 const TEXT_TOKENS: [TokenKey, string, string][] = [
@@ -54,6 +59,15 @@ const TEXT_TOKENS: [TokenKey, string, string][] = [
   ['connectorWidth', 'Connector width', '2px'],
   ['overlayBackground', 'Overlay background', 'transparent'],
   ['cameraDurationMs', 'Camera animation (ms)', '650'],
+  ['fadeDurationMs', 'Shot cut fade (ms)', '420'],
+  ['dimmedOpacity', 'Off-shot opacity', '0.16'],
+  ['frameRadius', 'Frame corner radius', '14px'],
+  ['framePadding', 'Frame outer padding', '0px'],
+  ['frameShadow', 'Frame shadow', '0 18px 60px rgba(0,0,0,0.55)'],
+  ['titleHeight', 'Title bar height', '58px'],
+  ['titleFontSize', 'Title text size', '26px'],
+  ['backgroundImage', 'Background image', 'url("https://…") or none'],
+  ['backgroundOpacity', 'Background opacity', '1'],
 ];
 
 export function ThemesPage() {

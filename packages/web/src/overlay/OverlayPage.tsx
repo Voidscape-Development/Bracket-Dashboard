@@ -10,8 +10,11 @@
  */
 
 import type {
+  BracketType,
   Entrant,
   OutputView,
+  Phase,
+  PhaseGroup,
   Standing,
   Theme,
   TournamentSet,
@@ -30,6 +33,10 @@ import { StandingsOverlay } from './StandingsOverlay.js';
 interface OverlayData {
   view: OutputView;
   theme: Theme;
+  /** Phase the server resolved this view to; the client never picks one. */
+  phase: Phase | null;
+  phaseGroup: PhaseGroup | null;
+  bracketType: BracketType;
   sets: TournamentSet[];
   entrants: Entrant[];
   standings: Standing[];
@@ -53,6 +60,9 @@ export function OverlayPage() {
         setData({
           view: result.view,
           theme: result.theme,
+          phase: result.phase ?? null,
+          phaseGroup: result.phaseGroup ?? null,
+          bracketType: result.bracketType ?? 'DOUBLE_ELIMINATION',
           sets: result.sets,
           entrants: result.entrants,
           standings: result.standings,
@@ -85,6 +95,9 @@ export function OverlayPage() {
           setData({
             view: message.view,
             theme: message.theme,
+            phase: message.phase,
+            phaseGroup: message.phaseGroup,
+            bracketType: message.bracketType,
             sets: message.sets,
             entrants: message.entrants,
             standings: message.standings,
@@ -94,8 +107,19 @@ export function OverlayPage() {
         case 'sets:changed':
           setData((current) => {
             if (!current) return current;
+            // Patches arrive for the whole event; keep only what belongs to the
+            // phase this overlay resolved to, or a pools update would leak into
+            // a top-cut display.
+            const belongs = (set: TournamentSet) =>
+              current.phaseGroup
+                ? set.phaseGroupId === current.phaseGroup.id
+                : current.phase
+                  ? set.phaseId === current.phase.id
+                  : true;
             const byId = new Map(current.sets.map((s) => [s.id, s]));
-            for (const set of message.upserted) byId.set(set.id, set);
+            for (const set of message.upserted) {
+              if (belongs(set)) byId.set(set.id, set);
+            }
             for (const id of message.removedIds) byId.delete(id);
             return { ...current, sets: [...byId.values()] };
           });
@@ -153,6 +177,8 @@ export function OverlayPage() {
             view={data.view}
             sets={data.sets}
             entrants={data.entrants}
+            bracketType={data.bracketType}
+            fadeMs={Number(data.theme.tokens.fadeDurationMs) || 420}
           />
         );
       case 'ondeck':

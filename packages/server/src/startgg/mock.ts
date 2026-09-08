@@ -39,6 +39,14 @@ interface MockSet {
   games: { id: string; orderNum: number; winnerId: string }[];
 }
 
+interface MockPhase {
+  id: string;
+  name: string;
+  order: number;
+  bracketType: string;
+  groups: { id: string; displayIdentifier: string }[];
+}
+
 interface MockEvent {
   id: string;
   name: string;
@@ -46,6 +54,8 @@ interface MockEvent {
   bracketType: string;
   phaseId: string;
   phaseGroupId: string;
+  /** Multi-phase events (pools into a top cut) declare their phases here. */
+  phases?: MockPhase[];
   entrants: { id: string; name: string; seed: number }[];
   sets: MockSet[];
 }
@@ -62,6 +72,11 @@ function now(): number {
 /** Builds a standard power-of-two double elimination bracket with full wiring. */
 function buildDoubleElimination(eventId: string, phaseId: string, groupId: string, size: 8): MockSet[] {
   const sets: MockSet[] = [];
+  // start.gg set ids are unique across the whole site, so the fixture namespaces
+  // them per bracket. Without this, two events that each contain a "round 1
+  // match 1" collide on the store's primary key and one silently overwrites the
+  // other.
+  const uid = (id: string) => `${groupId}-${id}`;
   const mk = (
     id: string,
     identifier: string,
@@ -70,7 +85,7 @@ function buildDoubleElimination(eventId: string, phaseId: string, groupId: strin
     a: MockSlot,
     b: MockSlot,
   ): MockSet => ({
-    id,
+    id: uid(id),
     eventId,
     phaseId,
     phaseGroupId: groupId,
@@ -99,7 +114,7 @@ function buildDoubleElimination(eventId: string, phaseId: string, groupId: strin
     slotIndex: index,
     entrantId: null,
     prereqType: 'set',
-    prereqId: setId,
+    prereqId: uid(setId),
     score: null,
   });
 
@@ -157,7 +172,7 @@ function buildRoundRobin(
   for (let i = 0; i < entrantIds.length; i++) {
     for (let j = i + 1; j < entrantIds.length; j++) {
       sets.push({
-        id: `rr-${n}`,
+        id: `${groupId}-rr-${n}`,
         eventId,
         phaseId,
         phaseGroupId: groupId,
@@ -193,7 +208,7 @@ function buildSingleElimination(
   const half = entrantIds.length / 2;
   for (let i = 0; i < half; i++) {
     sets.push({
-      id: `se1-${i + 1}`,
+      id: `${groupId}-se1-${i + 1}`,
       eventId,
       phaseId,
       phaseGroupId: groupId,
@@ -215,7 +230,7 @@ function buildSingleElimination(
     });
   }
   sets.push({
-    id: 'se2-1',
+    id: `${groupId}-se2-1`,
     eventId,
     phaseId,
     phaseGroupId: groupId,
@@ -230,8 +245,8 @@ function buildSingleElimination(
     stationNumber: null,
     streamName: null,
     slots: [
-      { slotIndex: 0, entrantId: null, prereqType: 'set', prereqId: 'se1-1', score: null },
-      { slotIndex: 1, entrantId: null, prereqType: 'set', prereqId: 'se1-2', score: null },
+      { slotIndex: 0, entrantId: null, prereqType: 'set', prereqId: `${groupId}-se1-1`, score: null },
+      { slotIndex: 1, entrantId: null, prereqType: 'set', prereqId: `${groupId}-se1-2`, score: null },
     ],
     games: [],
   });
@@ -305,6 +320,58 @@ export class MockWorld {
         '300003',
         doublesEntrants.map((e) => e.id),
       ),
+    });
+
+    // A two-phase event: round robin pools feeding a single elimination top cut.
+    // This is the shape that breaks naive "all sets in the event" rendering,
+    // because both phases number their rounds from 1.
+    const poolA = ['x1', 'x2', 'x3'];
+    const poolB = ['x4', 'x5', 'x6'];
+    const bracketEntrants = [...poolA, ...poolB].map((id, i) => ({
+      id,
+      name: `${TAGS[i % TAGS.length]}-${id.toUpperCase()}`,
+      seed: i + 1,
+    }));
+
+    const poolSets = [
+      ...buildRoundRobin('100004', '200004', '300004', poolA),
+      ...buildRoundRobin('100004', '200004', '300005', poolB),
+    ];
+    const topCut = buildSingleElimination('100004', '200005', '300006', [
+      'x1',
+      'x4',
+      'x2',
+      'x5',
+    ]);
+
+    this.events.push({
+      id: '100004',
+      name: 'Rivals — Pools to Top Cut',
+      slug: `tournament/${this.slug}/event/rivals`,
+      bracketType: 'ROUND_ROBIN',
+      phaseId: '200004',
+      phaseGroupId: '300004',
+      phases: [
+        {
+          id: '200004',
+          name: 'Pools',
+          order: 1,
+          bracketType: 'ROUND_ROBIN',
+          groups: [
+            { id: '300004', displayIdentifier: 'A' },
+            { id: '300005', displayIdentifier: 'B' },
+          ],
+        },
+        {
+          id: '200005',
+          name: 'Top Cut',
+          order: 2,
+          bracketType: 'SINGLE_ELIMINATION',
+          groups: [{ id: '300006', displayIdentifier: '1' }],
+        },
+      ],
+      entrants: bracketEntrants,
+      sets: [...poolSets, ...topCut],
     });
   }
 
@@ -526,27 +593,33 @@ export class MockTransport implements GqlTransport {
               startAt: now() - 1800,
               numEntrants: event.entrants.length,
               videogame: { id: '1', name: 'Demo Game', images: [] },
-              phases: [
-                {
-                  id: event.phaseId,
-                  name: 'Bracket',
-                  phaseOrder: 1,
-                  bracketType: event.bracketType,
-                  groupCount: 1,
-                  state: 2,
-                  phaseGroups: {
-                    nodes: [
-                      {
-                        id: event.phaseGroupId,
-                        displayIdentifier: 'A',
-                        bracketType: event.bracketType,
-                        state: 2,
-                        rounds: [],
-                      },
-                    ],
+              phases: (
+                event.phases ?? [
+                  {
+                    id: event.phaseId,
+                    name: 'Bracket',
+                    order: 1,
+                    bracketType: event.bracketType,
+                    groups: [{ id: event.phaseGroupId, displayIdentifier: 'A' }],
                   },
+                ]
+              ).map((phase) => ({
+                id: phase.id,
+                name: phase.name,
+                phaseOrder: phase.order,
+                bracketType: phase.bracketType,
+                groupCount: phase.groups.length,
+                state: 2,
+                phaseGroups: {
+                  nodes: phase.groups.map((group) => ({
+                    id: group.id,
+                    displayIdentifier: group.displayIdentifier,
+                    bracketType: phase.bracketType,
+                    state: 2,
+                    rounds: [],
+                  })),
                 },
-              ],
+              })),
             })),
           },
         } as T;
@@ -581,9 +654,16 @@ export class MockTransport implements GqlTransport {
       }
 
       case 'PhaseGroupSets': {
-        const event = world.events.find((e) => e.phaseGroupId === String(vars.phaseGroupId));
+        const groupId = String(vars.phaseGroupId);
+        const event = world.events.find(
+          (e) =>
+            e.phaseGroupId === groupId ||
+            (e.phases ?? []).some((p) => p.groups.some((g) => g.id === groupId)),
+        );
         if (!event) throw new GqlError('Phase group not found', 'graphql');
-        const nodes = event.sets.map((s) => setPayload(event, s));
+        const nodes = event.sets
+          .filter((s) => s.phaseGroupId === groupId)
+          .map((s) => setPayload(event, s));
         return {
           phaseGroup: {
             id: event.phaseGroupId,

@@ -88,6 +88,22 @@ export const DEFAULT_AUTO_FOLLOW: AutoFollowConfig = {
   resumeAfterManualMs: 30000,
 };
 
+/** How a punch-in treats the matches outside the shot. */
+export type FocusMode =
+  /** Only what fits in the frame is visible; the rest is cropped away. */
+  | 'crop'
+  /** Everything stays rendered, with off-shot matches faded back. */
+  | 'dim';
+
+/** How the camera gets from one shot to the next. */
+export type ShotTransition =
+  /** Always glide. Good within a bracket half, slow across a whole bracket. */
+  | 'pan'
+  /** Always cut through a cross-fade. */
+  | 'fade'
+  /** Glide for nearby shots, fade for distant ones. */
+  | 'auto';
+
 export interface BracketViewConfig {
   kind: 'bracket';
   showRoundLabels: boolean;
@@ -104,6 +120,20 @@ export interface BracketViewConfig {
   showConnectors: boolean;
   /** Render the losers bracket (double elim only). */
   showLosers: boolean;
+
+  /** Draw the fixed panel the bracket moves inside. */
+  showFrame: boolean;
+  /** Draw the title bar above the panel. */
+  showTitle: boolean;
+  /**
+   * Title text. Supports one `|` to split a highlighted lead-in from the rest,
+   * e.g. "MY MAJOR | MELEE TOP 8".
+   */
+  title: string;
+  focusMode: FocusMode;
+  transition: ShotTransition;
+  /** Outline the match the camera is centred on. */
+  highlightFocused: boolean;
 }
 
 export interface OnDeckViewConfig {
@@ -152,7 +182,18 @@ export interface OutputView {
   /** Unguessable path segment; lets OBS and TVs load without a login. */
   secret: string;
   eventId: Id | null;
+  /**
+   * Phase to display. An event's phases (pools, then top cut) have unrelated
+   * round numbering, so a bracket view renders exactly one phase at a time.
+   */
+  phaseId: Id | null;
+  /** A specific pool within the phase; null means the phase's first group. */
   phaseGroupId: Id | null;
+  /**
+   * Re-point the view at whichever phase is currently live as the event
+   * progresses, so an unattended display follows pools into top cut on its own.
+   */
+  followActivePhase: boolean;
   themeId: string;
   config: ViewConfig;
   camera: CameraState;
@@ -179,6 +220,12 @@ export function defaultConfigFor(kind: ViewKind): ViewConfig {
         hideEmptyRounds: false,
         showConnectors: true,
         showLosers: true,
+        showFrame: false,
+        showTitle: false,
+        title: '',
+        focusMode: 'dim',
+        transition: 'auto',
+        highlightFocused: true,
       };
     case 'ondeck':
       return {
