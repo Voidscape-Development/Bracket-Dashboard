@@ -24,7 +24,8 @@ function findWebRoot(): string | null {
   const candidates = [
     process.env.BRACKET_WEB_ROOT,
     resolve(here, '../../web/dist'),
-    resolve(process.resourcesPath ?? '', 'app/packages/web/dist'),
+    // Packaged builds carry the web bundle as an extra resource beside the asar.
+    resolve(process.resourcesPath ?? '', 'web'),
   ].filter((value): value is string => Boolean(value));
 
   for (const candidate of candidates) {

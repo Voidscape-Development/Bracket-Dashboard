@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Electron shell for Bracket Dashboard",
+  "author": "Voidscape Development",
   "type": "module",
   "main": "./dist/main.js",
   "scripts": {
@@ -17,15 +18,28 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.1",
-    "electron": "^33.2.1",
+    "electron": "33.4.11",
     "electron-builder": "^25.1.8"
   },
   "build": {
     "appId": "gg.bracketdashboard.app",
     "productName": "Bracket Dashboard",
-    "files": ["dist/**", "../server/dist/**", "../web/dist/**", "../shared/dist/**"],
-    "mac": { "target": ["dmg"] },
+    "directories": { "output": "release" },
+    "artifactName": "bracket-dashboard-${version}-${os}-${arch}.${ext}",
+    "files": ["dist/**"],
+    "extraResources": [{ "from": "../web/dist", "to": "web" }],
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.utilities",
+      "identity": null
+    },
     "win": { "target": ["nsis"] },
-    "linux": { "target": ["AppImage"] }
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Utility",
+      "executableName": "bracket-dashboard"
+    },
+    "npmRebuild": false,
+    "publish": null
   }
 }

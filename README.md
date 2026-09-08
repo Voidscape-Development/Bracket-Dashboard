@@ -85,7 +85,25 @@ npm run package -w @bracket/desktop   # build installers
 
 The Electron shell runs the same backend in-process. Because it bundles
 `better-sqlite3`, run `npm run rebuild -w @bracket/desktop` after changing Electron
-versions.
+versions — and before packaging, since packaging itself no longer rebuilds native
+modules (`npmRebuild` is off, because electron-builder's own rebuild step prunes
+the workspace's hoisted `node_modules`).
+
+### Installers
+
+The **Desktop build** workflow packages Windows (`.exe`), macOS (`.dmg`, Apple
+Silicon and Intel) and Linux (`.AppImage`) on every push to `main`, and can also be
+run by hand from the Actions tab.
+
+| Trigger | Where it lands |
+| --- | --- |
+| Push a `v*` tag | A release on that tag, marked **Latest** |
+| Push to `main`, or run manually | The rolling **beta** prerelease, replaced each build |
+| Pull request | Workflow artifacts only, nothing published |
+
+Builds are unsigned: Windows SmartScreen warns on first run, and macOS needs a
+Control-click → **Open** the first time. Testers can always grab the newest preview
+from the `beta` release, which points at the commit that produced it.
 
 ---
 
