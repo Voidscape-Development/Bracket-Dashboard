@@ -1,0 +1,237 @@
+name: Desktop build
+
+# Packages the Electron shell for the three desktop platforms.
+#
+#   tag push (v*)  -> a release pinned to that tag, marked "Latest"
+#   anything else  -> the rolling "beta" preview release, replaced every build
+#   pull request   -> installers as workflow artifacts only, nothing published
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to the rolling beta release (off = build artifacts only)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  meta:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.resolve.outputs.channel }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Every matrix leg has to stamp the same version, so it is decided once here.
+      - id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=$(node -p "require('./packages/desktop/package.json').version.split('-')[0]")
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+            version="${tag#v}"
+            channel=release
+            # A tag that is itself a prerelease (v1.2.0-rc.1) should not steal "Latest".
+            if [[ "$version" == *-* ]]; then prerelease=true; else prerelease=false; fi
+          elif [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            channel=none
+            tag=""
+            version="$base-pr.${{ github.event.number }}.$GITHUB_RUN_NUMBER"
+            prerelease=true
+          elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "${{ inputs.publish }}" != "true" ]]; then
+            channel=none
+            tag=""
+            version="$base-dev.$GITHUB_RUN_NUMBER"
+            prerelease=true
+          else
+            channel=beta
+            tag=beta
+            version="$base-beta.$GITHUB_RUN_NUMBER"
+            prerelease=true
+          fi
+
+          {
+            echo "channel=$channel"
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Building $version (channel: $channel)" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: meta
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux (x64)
+            os: ubuntu-latest
+            target: --linux
+          - name: Windows (x64)
+            os: windows-latest
+            target: --win
+          - name: macOS (Apple Silicon)
+            os: macos-latest
+            target: --mac
+          # Last x86_64 macOS image Actions offers; retires in Fall 2027.
+          - name: macOS (Intel)
+            os: macos-15-intel
+            target: --mac
+    env:
+      # No signing certificates are configured, so don't let electron-builder go
+      # hunting for one in the runner's keychain.
+      CSC_IDENTITY_AUTO_DISCOVERY: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # @electron/rebuild depends on a fork of node-gyp straight from git, and the
+      # lockfile pins it over ssh — which a runner has no key for.
+      - name: Prefer https for git dependencies
+        run: git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+
+      - name: Cache Electron downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci
+
+      - name: Stamp version ${{ needs.meta.outputs.version }}
+        run: npm pkg set version="${{ needs.meta.outputs.version }}" -w @bracket/desktop
+
+      # electron-builder only packages what is already compiled: the desktop
+      # tsc build pulls in shared + server, but the web bundle is vite's job.
+      - name: Build workspaces
+        run: npm run build
+
+      # better-sqlite3 ships a binary for the runner's Node ABI. Electron needs
+      # its own. packaging runs with npmRebuild off, so this has to happen first.
+      - name: Rebuild native modules against Electron
+        run: npm run rebuild -w @bracket/desktop
+
+      - name: Package installer
+        run: npm run package -w @bracket/desktop -- ${{ matrix.target }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ runner.os }}-${{ runner.arch }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            packages/desktop/release/*.AppImage
+            packages/desktop/release/*.exe
+            packages/desktop/release/*.dmg
+
+  publish:
+    name: Publish ${{ needs.meta.outputs.channel }} release
+    needs: [meta, build]
+    if: needs.meta.outputs.channel != 'none'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          merge-multiple: true
+          path: installers
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANNEL: ${{ needs.meta.outputs.channel }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          VERSION: ${{ needs.meta.outputs.version }}
+          PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(installers/*)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "::error::no installers were produced"
+            exit 1
+          fi
+          printf 'Publishing %d file(s):\n' "${#files[@]}"
+          printf '  %s\n' "${files[@]}"
+
+          {
+            printf 'Unsigned test builds. Windows SmartScreen will warn on first run;\n'
+            printf 'on macOS, Control-click the app and choose Open the first time.\n\n'
+            printf '| Platform | Download |\n| --- | --- |\n'
+            printf '| Windows (x64) | `.exe` installer |\n'
+            printf '| macOS (Apple Silicon) | `-mac-arm64.dmg` |\n'
+            printf '| macOS (Intel) | `-mac-x64.dmg` |\n'
+            printf '| Linux (x64) | `.AppImage` |\n'
+          } > notes.md
+
+          if [[ "$CHANNEL" == beta ]]; then
+            # One tag testers can always point at. Recreated so it tracks the
+            # commit that produced these binaries.
+            {
+              printf '\n---\n\nPreview build `%s` from **%s** at commit `%s`.\n' \
+                "$VERSION" "$GITHUB_REF_NAME" "${GITHUB_SHA:0:7}"
+              printf 'This release is replaced by every new build.\n'
+            } >> notes.md
+
+            gh release delete beta --yes --cleanup-tag || true
+            git push origin --delete beta 2>/dev/null || true
+
+            gh release create beta \
+              --target "$GITHUB_SHA" \
+              --title "Beta / preview build ($VERSION)" \
+              --notes-file notes.md \
+              --prerelease \
+              --latest=false \
+              "${files[@]}"
+          else
+            args=(--notes-file notes.md)
+            if [[ "$PRERELEASE" == true ]]; then
+              args+=(--prerelease --latest=false)
+            else
+              args+=(--latest)
+            fi
+
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" --clobber "${files[@]}"
+              gh release edit "$TAG" --draft=false "${args[@]}"
+            else
+              gh release create "$TAG" --title "$TAG" "${args[@]}" "${files[@]}"
+            fi
+          fi
+
+          echo "Published $CHANNEL release at tag $TAG" >> "$GITHUB_STEP_SUMMARY"
