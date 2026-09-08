@@ -18,6 +18,7 @@ import {
 
 import { mapEntrant, mapSet, mapStanding, mapTournament } from './mappers.js';
 import {
+  DEFAULT_SET_SORT,
   EVENT_ENTRANTS,
   EVENT_STANDINGS,
   EVENT_STATIONS,
@@ -35,6 +36,7 @@ import {
   reportSetMutation,
   resetSetMutation,
   TOURNAMENT_STRUCTURE,
+  type SetSortType,
 } from './queries.js';
 import { GqlError, type GqlTransport } from './transport.js';
 
@@ -50,6 +52,12 @@ export interface ClientOptions {
   groupsPerPage?: number;
   /** Floor for the adaptive shrink. Below this, something else is wrong. */
   minPerPage?: number;
+  /**
+   * Sort passed to every set read. Leave it alone unless you specifically want
+   * the station call queue — `CALL_ORDER` silently drops completed sets, which
+   * empties a finished bracket. See `SetSortType` in queries.ts.
+   */
+  setsSortType?: SetSortType;
 }
 
 /**
@@ -81,6 +89,8 @@ export interface ClientHealth {
   degradedFields: boolean;
   /** Current page size per operation, after any complexity-driven shrink. */
   pageSizes: Record<string, number>;
+  /** Sort used for set reads; decides whether finished sets come back at all. */
+  setsSortType: SetSortType;
 }
 
 interface QueueItem {
@@ -159,6 +169,7 @@ export class StartggClient extends EventEmitter {
   private readonly pacer: RequestPacer;
   private readonly maxRetries: number;
   private readonly minPerPage: number;
+  private readonly setsSortType: SetSortType;
   private setFragment = SET_FRAGMENT_RICH;
   private degraded = false;
   /** Live page size per operation; only ever shrinks, and only on evidence. */
@@ -180,6 +191,7 @@ export class StartggClient extends EventEmitter {
     );
     this.maxRetries = options.maxRetries ?? 3;
     this.minPerPage = Math.max(1, options.minPerPage ?? 2);
+    this.setsSortType = options.setsSortType ?? DEFAULT_SET_SORT;
 
     for (const [op, size] of Object.entries(DEFAULT_PAGE_SIZES)) {
       this.pageSizes.set(op, size);
@@ -215,6 +227,7 @@ export class StartggClient extends EventEmitter {
       requestsLastMinute: this.pacer.requestsLastMinute,
       degradedFields: this.degraded,
       pageSizes: Object.fromEntries(this.pageSizes),
+      setsSortType: this.setsSortType,
     };
   }
 
@@ -563,6 +576,7 @@ export class StartggClient extends EventEmitter {
   /**
    * Sets for an event. With `updatedAfter` this returns only what changed, which
    * is the whole point of the delta sync — a quiet event costs one small call.
+   * Without it, every set comes back including the ones already played.
    */
   async fetchEventSets(eventId: Id, updatedAfter?: number | null): Promise<PagedSets> {
     const { items, total } = await this.collectPages<TournamentSet>({
@@ -570,7 +584,7 @@ export class StartggClient extends EventEmitter {
       maxPages: 400,
       fetchPage: async (page, perPage) => {
         const data = await this.requestSets<any>(
-          eventSetsQuery,
+          (fragment) => eventSetsQuery(fragment, this.setsSortType),
           { eventId, page, perPage, updatedAfter: updatedAfter ?? null },
           'EventSets',
         );
@@ -586,13 +600,21 @@ export class StartggClient extends EventEmitter {
     return { sets: items, total };
   }
 
-  async fetchPhaseGroupSets(phaseGroupId: Id): Promise<TournamentSet[]> {
+  /**
+   * Sets for one bracket, read straight off the phase group.
+   *
+   * This is the same data by a different resolver, which makes it the fallback
+   * when the event-level read comes back empty for a bracket that plainly has
+   * sets. `eventId` is only a backstop for nodes that arrive without their own
+   * `event` — mapping drops a set that cannot be attributed to an event.
+   */
+  async fetchPhaseGroupSets(phaseGroupId: Id, eventId?: Id): Promise<TournamentSet[]> {
     const { items } = await this.collectPages<TournamentSet>({
       operation: 'PhaseGroupSets',
       maxPages: 200,
       fetchPage: async (page, perPage) => {
         const data = await this.requestSets<any>(
-          phaseGroupSetsQuery,
+          (fragment) => phaseGroupSetsQuery(fragment, this.setsSortType),
           { phaseGroupId, page, perPage },
           'PhaseGroupSets',
         );
@@ -603,7 +625,7 @@ export class StartggClient extends EventEmitter {
           total: null,
         };
       },
-      map: (node) => mapSet(node),
+      map: (node) => mapSet(node, eventId),
     });
     return items;
   }

@@ -5,6 +5,7 @@
  * exercise the real client, store and engine without a network.
  */
 
+import { ActivityState } from '@bracket/shared';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,14 +25,46 @@ function freshStore(): Store {
   return new Store(join(dir, 'test.sqlite'));
 }
 
-function harness() {
+interface HarnessOptions {
+  /** Play every bracket out first, giving a tournament that is already over. */
+  finished?: boolean;
+  clientOptions?: Record<string, unknown>;
+  engineOptions?: Record<string, unknown>;
+  /** Wraps the mock transport, e.g. to make one operation answer with nothing. */
+  wrapTransport?: (inner: any) => any;
+}
+
+function harness(options: HarnessOptions = {}) {
   const world = new MockWorld();
+  if (options.finished) world.completeAll();
   // autoAdvanceMs 0 keeps the simulation still so assertions are deterministic.
-  const transport = new MockTransport(world, { autoAdvanceMs: 0 });
-  const client = new StartggClient(transport, { requestsPerMinute: 10000 });
+  const mock = new MockTransport(world, { autoAdvanceMs: 0 });
+  const transport = options.wrapTransport ? options.wrapTransport(mock) : mock;
+  const client = new StartggClient(transport, {
+    requestsPerMinute: 10000,
+    ...(options.clientOptions ?? {}),
+  });
   const store = freshStore();
-  const sync = new SyncEngine(store, client);
+  const sync = new SyncEngine(store, client, options.engineOptions ?? {});
   return { world, transport, client, store, sync };
+}
+
+/** The 8-entrant double elimination event, which has a known 15 sets. */
+function mainEvent(store: Store) {
+  const event = store
+    .listEvents()
+    .find((e) => e.phases[0]?.bracketType === 'DOUBLE_ELIMINATION');
+  assert.ok(event, 'the double elimination event was imported');
+  return event;
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.fail(`condition not met within ${timeoutMs}ms`);
 }
 
 after(() => {
@@ -72,6 +105,123 @@ test('importing a tournament stores every event, bracket and set', async () => {
   assert.ok(main);
   assert.equal(store.listSets(main.id).length, 15);
   assert.equal(store.listEntrants(main.id).length, 8);
+});
+
+test('a finished tournament imports its whole set history', async () => {
+  const { store, sync, world } = harness({ finished: true });
+
+  const result = await sync.importTournament(world.slug);
+  assert.ok(result);
+
+  const main = mainEvent(store);
+  const sets = store.listSets(main.id);
+
+  // The point of importing a tournament that is over is the results: every set
+  // has to arrive, with its winner and score, not just the ones still callable.
+  assert.equal(sets.length, 15);
+  assert.ok(
+    sets.every((s) => s.state === ActivityState.Completed),
+    'every set came back completed',
+  );
+  assert.ok(sets.every((s) => s.winnerId !== null), 'every set kept its winner');
+  assert.ok(sets.every((s) => s.slots.some((slot) => slot.score !== null)), 'scores survived');
+
+  const status = store.eventStatuses().find((s) => s.eventId === main.id)!;
+  assert.equal(status.totalSets, 15);
+  assert.equal(status.completedSets, 15);
+});
+
+test('call order is never used to read sets: it hides the ones already played', async () => {
+  // The regression itself. start.gg builds CALL_ORDER from the queue of sets
+  // waiting for a station, so a finished bracket has nothing in it — which is
+  // what left completed tournaments importing with an empty bracket.
+  const callOrder = harness({ finished: true, clientOptions: { setsSortType: 'CALL_ORDER' } });
+  const eventId = callOrder.world.events[0]!.id;
+  assert.equal((await callOrder.client.fetchEventSets(eventId, null)).sets.length, 0);
+
+  const standard = harness({ finished: true });
+  assert.equal(standard.client.health.setsSortType, 'STANDARD');
+  assert.equal((await standard.client.fetchEventSets(eventId, null)).sets.length, 15);
+});
+
+test('an event the event-level read will not answer for is backfilled from its pools', async () => {
+  // Belt and braces for the same failure arriving some other way: whatever the
+  // sort, an unfiltered read that comes back empty for an event that has
+  // brackets is wrong, so each phase group is asked directly instead.
+  const { store, sync, world } = harness({
+    finished: true,
+    wrapTransport: (inner) => ({
+      name: inner.name,
+      endpoint: inner.endpoint,
+      canMutate: inner.canMutate,
+      async execute(request: any) {
+        if ((request.operationName ?? '') === 'EventSets') {
+          return {
+            event: {
+              id: String(request.variables?.eventId),
+              sets: { nodes: [], pageInfo: { total: 0, totalPages: 1, page: 1 } },
+            },
+          };
+        }
+        return inner.execute(request);
+      },
+    }),
+  });
+
+  await sync.importTournament(world.slug);
+
+  const main = mainEvent(store);
+  assert.equal(store.listSets(main.id).length, 15);
+
+  // Sets read off a phase group still land under the right event and bracket.
+  assert.ok(store.listSets(main.id).every((s) => s.eventId === main.id));
+  const groupId = main.phases[0]!.groups[0]!.id;
+  assert.equal(store.listSetsByPhaseGroup(groupId).length, 15);
+
+  // And the multi-phase event keeps its pools and its top cut apart.
+  const multi = store.listEvents().find((e) => e.phases.length > 1)!;
+  const byPhase = new Set(store.listSets(multi.id).map((s) => s.phaseId));
+  assert.equal(byPhase.size, 2);
+});
+
+test('an event that stored no sets is repaired without waiting for a full reconcile', async () => {
+  // A database written by the broken build: the watermark is up to date but no
+  // set ever landed, so a delta read can only ever return nothing.
+  const { store, sync, world } = harness({
+    finished: true,
+    engineOptions: {
+      tickMs: 10,
+      cadence: {
+        liveMs: 20,
+        warmMs: 20,
+        idleMs: 20,
+        doneMs: 20,
+        // An hour: only the empty-store check can force an unfiltered read here.
+        fullReconcileMs: 3_600_000,
+      },
+    },
+  });
+
+  await sync.importTournament(world.slug);
+  const main = mainEvent(store);
+  assert.equal(store.countSets(main.id), 15);
+
+  sync.refreshTrackedEvents();
+  sync.start();
+  try {
+    // Let the engine bank its one full reconcile first.
+    await waitFor(() =>
+      sync.listStates().some((s) => s.eventId === main.id && s.lastFullReconcileAt !== null),
+    );
+
+    store.db.prepare('DELETE FROM sets WHERE event_id = ?').run(main.id);
+    assert.equal(store.countSets(main.id), 0);
+    assert.ok(store.getWatermark(main.id)! > 0, 'the watermark is still current');
+
+    await waitFor(() => store.countSets(main.id) === 15);
+  } finally {
+    sync.stop();
+  }
 });
 
 test('an unknown slug reports not-found rather than throwing', async () => {
