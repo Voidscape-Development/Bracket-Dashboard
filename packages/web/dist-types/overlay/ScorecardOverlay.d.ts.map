@@ -1,0 +1,1 @@
+{"version":3,"file":"ScorecardOverlay.d.ts","sourceRoot":"","sources":["../../src/overlay/ScorecardOverlay.tsx"],"names":[],"mappings":"AAAA;;;;;;GAMG;AAEH,OAAO,EAEL,KAAK,UAAU,EAEf,KAAK,aAAa,EACnB,MAAM,iBAAiB,CAAC;AAGzB,MAAM,WAAW,qBAAqB;IACpC,IAAI,EAAE,UAAU,CAAC;IACjB,IAAI,EAAE,aAAa,EAAE,CAAC;CACvB;AAED,wBAAgB,gBAAgB,CAAC,EAAE,IAAI,EAAE,IAAI,EAAE,EAAE,qBAAqB,+BAiErE"}

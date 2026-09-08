@@ -1,0 +1,31 @@
+{
+  "name": "bracket-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first tournament bracket dashboard and OBS overlay system powered by start.gg",
+  "license": "MIT",
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/web",
+    "packages/desktop"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "npm run build -w @bracket/shared && npm run build -w @bracket/web && npm run build -w @bracket/server",
+    "dev": "concurrently -n server,web -c blue,magenta \"npm run dev -w @bracket/server\" \"npm run dev -w @bracket/web\"",
+    "start": "node packages/server/dist/bin/serve.js",
+    "desktop": "npm run dev -w @bracket/desktop",
+    "typecheck": "tsc -b packages/shared packages/server packages/web packages/desktop",
+    "test": "npm run test -w @bracket/shared && npm run test -w @bracket/server",
+    "lint": "eslint packages --ext .ts,.tsx",
+    "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.2"
+  }
+}
