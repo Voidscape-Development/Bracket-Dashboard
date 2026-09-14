@@ -375,6 +375,11 @@ export class MockWorld {
     });
   }
 
+  /** True once every set in the event has been played, as start.gg would report. */
+  isFinished(event: MockEvent): boolean {
+    return event.sets.length > 0 && event.sets.every((s) => s.state === 3);
+  }
+
   findSet(setId: string): { event: MockEvent; set: MockSet } | null {
     for (const event of this.events) {
       const set = event.sets.find((s) => s.id === setId);
@@ -590,16 +595,33 @@ function paginate<T>(items: T[], page: number, perPage: number) {
  * Transport that answers against a `MockWorld`. Dispatches on operation name,
  * which is why every document in queries.ts carries one.
  */
+export interface MockTransportOptions {
+  autoAdvanceMs?: number;
+  /**
+   * Makes `event.sets` omit played sets whatever sort is asked for, while the
+   * per-bracket resolver still lists them.
+   *
+   * This is not hypothetical: it is the shape of the bug that keeps a finished
+   * tournament showing an empty bracket. Switching the sort away from
+   * `CALL_ORDER` fixed one version of it, and the same symptom came back on the
+   * site endpoint, so the fixture can now reproduce it independently of the
+   * sort and the fallback can be tested for what it actually has to survive.
+   */
+  hideCompletedFromEventSets?: boolean;
+}
+
 export class MockTransport implements GqlTransport {
   readonly name = 'mock';
   readonly endpoint = 'mock://start.gg';
   readonly canMutate = true;
   private timer: NodeJS.Timeout | null = null;
+  private readonly hideCompletedFromEventSets: boolean;
 
   constructor(
     readonly world = new MockWorld(),
-    options: { autoAdvanceMs?: number } = {},
+    options: MockTransportOptions = {},
   ) {
+    this.hideCompletedFromEventSets = options.hideCompletedFromEventSets ?? false;
     const interval = options.autoAdvanceMs ?? 6000;
     if (interval > 0) {
       this.timer = setInterval(() => this.world.tick(), interval);
@@ -645,7 +667,9 @@ export class MockTransport implements GqlTransport {
               id: event.id,
               name: event.name,
               slug: event.slug,
-              state: 2,
+              // An event whose bracket has been played out reports itself
+              // finished, which is what the set read keys its thoroughness off.
+              state: world.isFinished(event) ? 3 : 2,
               startAt: now() - 1800,
               numEntrants: event.entrants.length,
               videogame: { id: '1', name: 'Demo Game', images: [] },
@@ -728,14 +752,16 @@ export class MockTransport implements GqlTransport {
         if (!event) throw new GqlError('Event not found', 'graphql');
         const updatedAfter = vars.updatedAfter == null ? null : Number(vars.updatedAfter);
         const callOrder = sortTypeOf(request.query) === 'CALL_ORDER';
+        const omitPlayed = callOrder || this.hideCompletedFromEventSets;
         const filtered = event.sets.filter(
           (s) =>
             (updatedAfter === null || s.updatedAt > updatedAfter) &&
             // Reproduces the trap this endpoint sets: the call order is the
             // queue of sets still waiting for a station, so a set that has been
             // played is simply not in it, and a finished event answers with
-            // nothing at all.
-            !(callOrder && s.state === 3),
+            // nothing at all. `hideCompletedFromEventSets` reproduces the same
+            // omission without the sort being the cause.
+            !(omitPlayed && s.state === 3),
         );
         const nodes = filtered.map((s) => setPayload(event, s));
         return {

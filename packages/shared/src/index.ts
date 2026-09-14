@@ -1,4 +1,5 @@
 export * from './domain.js';
+export * from './activity.js';
 export * from './layout.js';
 export * from './theme.js';
 export * from './views.js';

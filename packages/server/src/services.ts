@@ -12,6 +12,7 @@ import {
   type User,
 } from '@bracket/shared';
 
+import { ActivityLog } from './activity.js';
 import type { AppConfig } from './config.js';
 import { Store } from './db/store.js';
 import { StartggClient } from './startgg/client.js';
@@ -28,6 +29,7 @@ export interface Services {
   sync: SyncEngine;
   outbox: OutboxWorker;
   hub: Hub;
+  activity: ActivityLog;
   /** Rebuilds the transport after a settings change. */
   applyTransportSettings(settings: {
     transport?: AppConfig['transport'];
@@ -73,9 +75,10 @@ export function createServices(config: AppConfig): Services {
     perPage: effective.perPage,
     groupsPerPage: effective.groupsPerPage,
   });
+  const activity = new ActivityLog();
   const hub = new Hub(store);
-  const sync = new SyncEngine(store, client);
-  const outbox = new OutboxWorker(store, client);
+  const sync = new SyncEngine(store, client, { activity });
+  const outbox = new OutboxWorker(store, client, { activity });
 
   // ---- Signal wiring -------------------------------------------------------
 
@@ -89,15 +92,38 @@ export function createServices(config: AppConfig): Services {
     hub.publishStatus({ ...client.health });
   });
 
-  client.on('health', (health) => {
+  // Health fires several times per request — queued, answered, settled — so an
+  // import would otherwise put a socket message on the wire for every one of a
+  // few hundred calls. The counters are a gauge, not a log: a coalesced update
+  // a few times a second says the same thing. A connection dropping or coming
+  // back is not a counter and goes out at once.
+  let healthTimer: NodeJS.Timeout | null = null;
+  const publishHealth = (health: typeof client.health): void => {
     hub.publishStatus({
       online: health.online,
       lastSuccessAt: health.lastSuccessAt,
       lastErrorAt: health.lastErrorAt,
       lastError: health.lastError,
       requestsLastMinute: health.requestsLastMinute,
+      requestsInFlight: health.requestsInFlight,
     });
+  };
+  client.on('health', (health) => {
+    if (health.online !== hub.connectionStatus.online) {
+      if (healthTimer) clearTimeout(healthTimer);
+      healthTimer = null;
+      publishHealth(health);
+      return;
+    }
+    if (healthTimer) return;
+    healthTimer = setTimeout(() => {
+      healthTimer = null;
+      publishHealth(client.health);
+    }, 400);
+    healthTimer.unref?.();
   });
+
+  activity.on('changed', (snapshot) => hub.publishActivity(snapshot));
   client.on('online', () => {
     // Connection is back: flush anything the venue queued while it was down.
     void outbox.drain();
@@ -128,6 +154,7 @@ export function createServices(config: AppConfig): Services {
     sync,
     outbox,
     hub,
+    activity,
 
     applyTransportSettings(settings) {
       if (settings.transport) {
@@ -144,9 +171,11 @@ export function createServices(config: AppConfig): Services {
     },
 
     shutdown() {
+      if (healthTimer) clearTimeout(healthTimer);
       sync.stop();
       outbox.stop();
       hub.stop();
+      activity.stop();
       store.close();
     },
   };

@@ -160,6 +160,11 @@ function EventCard({
   const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
   const bracketTypes = [...new Set(event.phases.map((p) => p.bracketType))];
 
+  // The per-bracket read is slow, so it is offered where it is actually needed:
+  // an event with nothing stored, and a finished event, which is the one
+  // start.gg is least willing to list sets for.
+  const offerDeepRead = total === 0 || event.state === ActivityState.Completed;
+
   return (
     <Link to={`/events/${event.id}`} className="card-link">
       <div className="row row--tight" style={{ marginBottom: 6 }}>
@@ -195,6 +200,18 @@ function EventCard({
         >
           Sync
         </button>
+        {offerDeepRead && (
+          <button
+            className="btn btn--sm btn--ghost"
+            title="Read every bracket in this event directly — the read that returns matches already played."
+            onClick={(e) => {
+              e.preventDefault();
+              void api.deepSync(event.id).then(() => window.setTimeout(onRefresh, 2500));
+            }}
+          >
+            Load every set
+          </button>
+        )}
       </div>
 
       {status?.syncError && (

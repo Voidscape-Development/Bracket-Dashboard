@@ -33,6 +33,8 @@ export function EventPage() {
   const [groupId, setGroupId] = useState<Id | null>(null);
   const [selectedSet, setSelectedSet] = useState<TournamentSet | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof api.event>>['status']>(null);
+  const [loadingAll, setLoadingAll] = useState(false);
   const [config, setConfig] = useState<BracketViewConfig>(
     () => defaultConfigFor('bracket') as BracketViewConfig,
   );
@@ -42,6 +44,7 @@ export function EventPage() {
     try {
       const result = await api.event(eventId);
       setEvent(result.event);
+      setStatus(result.status);
       loadEvent(result);
       setGroupId((current) => current ?? result.event.phases[0]?.groups[0]?.id ?? null);
     } catch (err) {
@@ -52,6 +55,28 @@ export function EventPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * Reads every bracket of the event directly, rather than asking the event for
+   * its sets. That is the read start.gg answers for matches already played, so
+   * it is the one that fills in a finished bracket — and it is slow enough that
+   * a person has to ask for it. Results arrive over the socket, so the page is
+   * re-read a moment later rather than waiting on the request itself.
+   */
+  const loadEverySet = useCallback(async () => {
+    if (!eventId) return;
+    setLoadingAll(true);
+    try {
+      await api.deepSync(eventId);
+      // The engine picks the request up on its next tick; give it that long
+      // before re-reading, then let socket updates carry the rest.
+      window.setTimeout(() => void load(), 2500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not start the read');
+    } finally {
+      window.setTimeout(() => setLoadingAll(false), 2500);
+    }
+  }, [eventId, load]);
 
   const groups = useMemo(
     () =>
@@ -133,12 +158,28 @@ export function EventPage() {
         <button className="btn btn--sm" onClick={() => void api.sync(event.id).then(load)}>
           Sync now
         </button>
+        <button
+          className="btn btn--sm"
+          disabled={loadingAll}
+          title="Read every bracket in this event directly. Slower, and the only read that returns matches that have already been played."
+          onClick={() => void loadEverySet()}
+        >
+          {loadingAll ? 'Loading…' : 'Load every set'}
+        </button>
         {hasPermission(user, 'set:report') && (
           <Link className="btn btn--sm btn--primary" to={`/events/${event.id}/report`}>
             Report scores
           </Link>
         )}
       </div>
+
+      {sets.length === 0 && (
+        <EmptyBracketNotice
+          syncError={status?.syncError ?? null}
+          busy={loadingAll}
+          onLoadEverySet={() => void loadEverySet()}
+        />
+      )}
 
       <div className="event-stage">
         <BracketBody
@@ -154,6 +195,37 @@ export function EventPage() {
       {selectedSet && (
         <SetDetail set={selectedSet} onClose={() => setSelectedSet(null)} />
       )}
+    </div>
+  );
+}
+
+/**
+ * An event with no sets used to render as a blank canvas, which says nothing
+ * about whether the bracket is unpublished, still loading, or was never
+ * successfully read. It says so now, and offers the read that fixes the last of
+ * those without making anyone go and find it.
+ */
+function EmptyBracketNotice({
+  syncError,
+  busy,
+  onLoadEverySet,
+}: {
+  syncError: string | null;
+  busy: boolean;
+  onLoadEverySet: () => void;
+}) {
+  return (
+    <div className="alert alert--info" style={{ margin: 16, marginBottom: 0 }}>
+      <div style={{ marginBottom: 8 }}>
+        <strong>No matches stored for this bracket yet.</strong>{' '}
+        {syncError ??
+          'Either start.gg has not published it, or the sets have not been read ' +
+            'successfully. A finished event in particular can need reading bracket by ' +
+            'bracket, because start.gg will not always list matches that are already played.'}
+      </div>
+      <button className="btn btn--sm btn--primary" disabled={busy} onClick={onLoadEverySet}>
+        {busy ? 'Reading every bracket…' : 'Load every set'}
+      </button>
     </div>
   );
 }

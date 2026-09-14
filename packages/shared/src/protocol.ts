@@ -7,6 +7,7 @@
  * view.
  */
 
+import type { ActivitySnapshot } from './activity.js';
 import type { OutboxEntry } from './commands.js';
 import type {
   BracketType,
@@ -33,6 +34,8 @@ export interface ConnectionStatus {
   conflictCount: number;
   /** Requests made in the trailing minute, so the UI can show call volume. */
   requestsLastMinute: number;
+  /** Requests currently open, so "working" can be shown without guessing. */
+  requestsInFlight: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +154,16 @@ export interface OutboxChangedMessage {
   conflicts: number;
 }
 
+/**
+ * What the server is currently doing. Sent on subscribe and whenever a task
+ * starts, advances or finishes, so an operator watching an import can see it
+ * move rather than wondering whether the app has hung.
+ */
+export interface ActivityMessage {
+  type: 'activity';
+  activity: ActivitySnapshot;
+}
+
 export interface ErrorMessage {
   type: 'error';
   code: string;
@@ -172,5 +185,6 @@ export type ServerMessage =
   | ThemeUpdatedMessage
   | StatusMessage
   | OutboxChangedMessage
+  | ActivityMessage
   | ErrorMessage
   | PongMessage;

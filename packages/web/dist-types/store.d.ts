@@ -6,7 +6,7 @@
  * patched in place from `sets:changed` messages, so a bracket with hundreds of
  * matches re-renders only what moved.
  */
-import type { CameraState, ConnectionStatus, Entrant, EventStatus, Id, OutboxEntry, OutputView, ServerMessage, SessionUser, Standing, Theme, Tournament, TournamentEvent, TournamentSet } from '@bracket/shared';
+import type { ActivitySnapshot, CameraState, ConnectionStatus, Entrant, EventStatus, Id, OutboxEntry, OutputView, ServerMessage, SessionUser, Standing, Theme, Tournament, TournamentEvent, TournamentSet } from '@bracket/shared';
 export interface AppState {
     user: SessionUser | null;
     tournaments: Tournament[];
@@ -24,7 +24,10 @@ export interface AppState {
     };
     status: ConnectionStatus;
     socketConnected: boolean;
+    /** What the server is working on right now, pushed over the socket. */
+    activity: ActivitySnapshot;
     setUser(user: SessionUser | null): void;
+    setActivity(activity: ActivitySnapshot): void;
     setTournaments(tournaments: Tournament[], statuses: EventStatus[]): void;
     loadEvent(payload: {
         event: TournamentEvent;

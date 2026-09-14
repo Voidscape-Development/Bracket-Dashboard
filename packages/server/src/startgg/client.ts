@@ -85,6 +85,8 @@ export interface ClientHealth {
   lastErrorAt: number | null;
   lastError: string | null;
   requestsLastMinute: number;
+  /** Requests open right now, including ones queued behind the pacer. */
+  requestsInFlight: number;
   /** True once the rich set fragment has been downgraded. */
   degradedFields: boolean;
   /** Current page size per operation, after any complexity-driven shrink. */
@@ -179,6 +181,8 @@ export class StartggClient extends EventEmitter {
   private lastErrorAt: number | null = null;
   private lastError: string | null = null;
   private online = true;
+  /** Requests started but not yet resolved, counted across retries as one. */
+  private inFlight = 0;
 
   constructor(
     private transport: GqlTransport,
@@ -225,6 +229,7 @@ export class StartggClient extends EventEmitter {
       lastErrorAt: this.lastErrorAt,
       lastError: this.lastError,
       requestsLastMinute: this.pacer.requestsLastMinute,
+      requestsInFlight: this.inFlight,
       degradedFields: this.degraded,
       pageSizes: Object.fromEntries(this.pageSizes),
       setsSortType: this.setsSortType,
@@ -304,6 +309,21 @@ export class StartggClient extends EventEmitter {
   private async request<T>(
     query: string,
     variables: Record<string, unknown> = {},
+    operationName?: string,
+  ): Promise<T> {
+    this.inFlight += 1;
+    this.emit('health', this.health);
+    try {
+      return await this.attempt<T>(query, variables, operationName);
+    } finally {
+      this.inFlight = Math.max(0, this.inFlight - 1);
+      this.emit('health', this.health);
+    }
+  }
+
+  private async attempt<T>(
+    query: string,
+    variables: Record<string, unknown>,
     operationName?: string,
   ): Promise<T> {
     let attempt = 0;
