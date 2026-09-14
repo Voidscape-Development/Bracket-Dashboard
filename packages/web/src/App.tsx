@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
 import { api } from './api.js';
+import { ActivityIndicator } from './components/ActivityPanel.js';
 import { OverlayPage } from './overlay/OverlayPage.js';
 import { DashboardPage } from './pages/DashboardPage.js';
 import { DirectorPage } from './pages/DirectorPage.js';
@@ -140,6 +141,8 @@ function Sidebar() {
       ) : null}
 
       <div className="sidebar__footer">
+        <ActivityIndicator />
+
         <div className="row row--tight" style={{ marginBottom: 6 }}>
           <span
             className={`status-dot ${status.online ? '' : 'status-dot--off'}`}

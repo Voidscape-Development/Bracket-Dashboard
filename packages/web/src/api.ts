@@ -7,6 +7,7 @@
  */
 
 import type {
+  ActivitySnapshot,
   BracketType,
   ConflictResolution,
   Entrant,
@@ -108,7 +109,18 @@ export const api = {
     }),
   sync: (eventId?: Id, full = false) =>
     request<{ ok: true }>('/api/sync', { method: 'POST', json: { eventId, full } }),
+  /**
+   * Reads every bracket of an event directly instead of asking the event for
+   * its sets. Slower, and the only read that reliably returns matches that have
+   * already been played — so it is what "Load every set" calls.
+   */
+  deepSync: (eventId?: Id) =>
+    request<{ ok: true }>('/api/sync', {
+      method: 'POST',
+      json: { eventId, full: true, deep: true },
+    }),
   syncStatus: () => request<any>('/api/sync/status'),
+  activity: () => request<{ activity: ActivitySnapshot }>('/api/activity'),
   stations: (eventId: Id) =>
     request<{
       stations: { id: Id; number: number | null }[];

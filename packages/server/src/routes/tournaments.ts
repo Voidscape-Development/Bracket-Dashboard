@@ -75,12 +75,20 @@ export function registerTournamentRoutes(app: FastifyInstance, services: Service
     },
   );
 
+  /**
+   * `full` drops the watermark so the next read is unfiltered. `deep` also
+   * reads every bracket directly, which is the only read guaranteed to see sets
+   * the event-level endpoint declines to list — the reason a finished bracket
+   * can otherwise come back empty. It is slower and costs a request per pool,
+   * so it is asked for explicitly rather than run on every pass.
+   */
   app.post(
     '/api/sync',
     { onRequest: requirePermission('tournament:sync') },
     async (request) => {
-      const body = (request.body ?? {}) as { eventId?: Id; full?: boolean };
-      sync.requestSync(body.eventId, body.full ?? false);
+      const body = (request.body ?? {}) as { eventId?: Id; full?: boolean; deep?: boolean };
+      const deep = body.deep ?? false;
+      sync.requestSync(body.eventId, body.full ?? deep, deep);
       return { ok: true, states: sync.listStates() };
     },
   );
@@ -90,6 +98,11 @@ export function registerTournamentRoutes(app: FastifyInstance, services: Service
     states: sync.listStates(),
     health: services.client.health,
     statuses: store.eventStatuses(),
+  }));
+
+  /** What the server is working on, for clients that missed the socket push. */
+  app.get('/api/activity', { onRequest: requireSignedIn }, async () => ({
+    activity: services.activity.snapshot(),
   }));
 
   app.get('/api/events/:eventId', { onRequest: requireSignedIn }, async (request, reply) => {

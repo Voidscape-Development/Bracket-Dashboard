@@ -5,7 +5,7 @@
  * messages end up in front of a tournament organiser mid-event, so a raw status
  * code is not good enough.
  */
-import type { BracketType, ConflictResolution, Entrant, EventStatus, Id, OutboxEntry, OutputView, Phase, PhaseGroup, ReportCommand, SessionUser, Standing, Theme, Tournament, TournamentEvent, TournamentSet, User, ViewKind } from '@bracket/shared';
+import type { ActivitySnapshot, BracketType, ConflictResolution, Entrant, EventStatus, Id, OutboxEntry, OutputView, Phase, PhaseGroup, ReportCommand, SessionUser, Standing, Theme, Tournament, TournamentEvent, TournamentSet, User, ViewKind } from '@bracket/shared';
 export declare class ApiError extends Error {
     readonly status: number;
     readonly detail?: unknown | undefined;
@@ -45,7 +45,18 @@ export declare const api: {
     sync: (eventId?: Id, full?: boolean) => Promise<{
         ok: true;
     }>;
+    /**
+     * Reads every bracket of an event directly instead of asking the event for
+     * its sets. Slower, and the only read that reliably returns matches that have
+     * already been played — so it is what "Load every set" calls.
+     */
+    deepSync: (eventId?: Id) => Promise<{
+        ok: true;
+    }>;
     syncStatus: () => Promise<any>;
+    activity: () => Promise<{
+        activity: ActivitySnapshot;
+    }>;
     stations: (eventId: Id) => Promise<{
         stations: {
             id: Id;

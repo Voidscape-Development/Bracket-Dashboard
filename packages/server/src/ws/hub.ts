@@ -13,7 +13,9 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  EMPTY_ACTIVITY,
   pickAutoFollowTarget,
+  type ActivitySnapshot,
   type CameraState,
   type ConnectionStatus,
   type Id,
@@ -63,7 +65,9 @@ export class Hub {
     queuedCommands: 0,
     conflictCount: 0,
     requestsLastMinute: 0,
+    requestsInFlight: 0,
   };
+  private activity: ActivitySnapshot = EMPTY_ACTIVITY;
 
   constructor(
     private readonly store: Store,
@@ -216,6 +220,24 @@ export class Hub {
 
   get connectionStatus(): ConnectionStatus {
     return this.status;
+  }
+
+  /**
+   * Pushes what the server is working on. Overlays are excluded: a stream
+   * graphic has no business knowing about an import, and the traffic is pure
+   * overhead for a browser source.
+   */
+  publishActivity(activity: ActivitySnapshot): void {
+    this.activity = activity;
+    const message: ServerMessage = { type: 'activity', activity };
+    for (const client of this.clients.values()) {
+      if (client.kind !== 'dashboard') continue;
+      this.send(client, message);
+    }
+  }
+
+  get activitySnapshot(): ActivitySnapshot {
+    return this.activity;
   }
 
   publishViewUpdated(view: OutputView): void {

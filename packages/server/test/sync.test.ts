@@ -30,6 +30,8 @@ interface HarnessOptions {
   finished?: boolean;
   clientOptions?: Record<string, unknown>;
   engineOptions?: Record<string, unknown>;
+  /** Extra mock-transport behaviour, e.g. hiding played sets from event reads. */
+  mockOptions?: Record<string, unknown>;
   /** Wraps the mock transport, e.g. to make one operation answer with nothing. */
   wrapTransport?: (inner: any) => any;
 }
@@ -38,7 +40,7 @@ function harness(options: HarnessOptions = {}) {
   const world = new MockWorld();
   if (options.finished) world.completeAll();
   // autoAdvanceMs 0 keeps the simulation still so assertions are deterministic.
-  const mock = new MockTransport(world, { autoAdvanceMs: 0 });
+  const mock = new MockTransport(world, { autoAdvanceMs: 0, ...(options.mockOptions ?? {}) });
   const transport = options.wrapTransport ? options.wrapTransport(mock) : mock;
   const client = new StartggClient(transport, {
     requestsPerMinute: 10000,
@@ -222,6 +224,173 @@ test('an event that stored no sets is repaired without waiting for a full reconc
   } finally {
     sync.stop();
   }
+});
+
+test('a finished event is read bracket by bracket even when the event read answers', async () => {
+  // The failure that survived switching the sort: the event-level resolver
+  // answers, so nothing looks wrong, but every set it lists is unplayed. For an
+  // event start.gg itself calls finished that answer cannot be right, so the
+  // read goes to the per-bracket resolver, which does list played sets.
+  const { store, sync, world } = harness({
+    finished: true,
+    wrapTransport: (inner) => ({
+      name: inner.name,
+      endpoint: inner.endpoint,
+      canMutate: inner.canMutate,
+      async execute(request: any) {
+        const data: any = await inner.execute(request);
+        if ((request.operationName ?? '') !== 'EventSets') return data;
+        // Same sets, stripped of every sign that they were ever played.
+        for (const node of data?.event?.sets?.nodes ?? []) {
+          node.state = 1;
+          node.winnerId = null;
+          node.completedAt = null;
+          node.games = [];
+          for (const slot of node.slots ?? []) slot.standing = null;
+        }
+        return data;
+      },
+    }),
+  });
+
+  await sync.importTournament(world.slug);
+
+  const sets = store.listSets(mainEvent(store).id);
+  assert.equal(sets.length, 15);
+  assert.ok(
+    sets.every((s) => s.state === ActivityState.Completed),
+    'the per-bracket read supplied the results the event read withheld',
+  );
+  assert.ok(sets.every((s) => s.winnerId !== null), 'winners came through');
+});
+
+test('an event read that hands over fewer sets than it claims is completed from its pools', async () => {
+  // start.gg reporting `total: 15` and then handing over three of them is not a
+  // quiet event, it is a short read — and believing it leaves twelve matches
+  // missing with nothing to say so.
+  const { store, sync, world } = harness({
+    finished: true,
+    wrapTransport: (inner) => ({
+      name: inner.name,
+      endpoint: inner.endpoint,
+      canMutate: inner.canMutate,
+      async execute(request: any) {
+        const data: any = await inner.execute(request);
+        if ((request.operationName ?? '') !== 'EventSets') return data;
+        const connection = data?.event?.sets;
+        if (!connection) return data;
+        const total = connection.pageInfo?.total ?? connection.nodes.length;
+        connection.nodes = connection.nodes.slice(0, 3);
+        connection.pageInfo = { total, totalPages: 1, page: 1 };
+        return data;
+      },
+    }),
+  });
+
+  await sync.importTournament(world.slug);
+  assert.equal(store.listSets(mainEvent(store).id).length, 15);
+});
+
+test('brackets missing from the database are re-read rather than leaving an empty event', async () => {
+  // A structure read that came back without phase groups used to be terminal:
+  // the per-bracket fallback had nothing to iterate, returned an empty array,
+  // and the event sat at zero sets with no error anywhere. The structure is now
+  // re-read to recover them.
+  const { store, sync, world } = harness({
+    finished: true,
+    mockOptions: { hideCompletedFromEventSets: true },
+    engineOptions: { tickMs: 10, cadence: { doneMs: 20, fullReconcileMs: 3_600_000 } },
+  });
+
+  await sync.importTournament(world.slug);
+  const main = mainEvent(store);
+  assert.equal(store.countSets(main.id), 15);
+
+  // Wipe the sets and the brackets they were read from.
+  store.db.prepare('DELETE FROM sets WHERE event_id = ?').run(main.id);
+  store.db.prepare('DELETE FROM phase_groups WHERE event_id = ?').run(main.id);
+  assert.equal(store.getEvent(main.id)!.phases[0]!.groups.length, 0);
+
+  sync.refreshTrackedEvents();
+  sync.requestSync(main.id, true, true);
+  sync.start();
+  try {
+    await waitFor(() => store.countSets(main.id) === 15);
+  } finally {
+    sync.stop();
+  }
+  assert.ok(
+    store.getEvent(main.id)!.phases[0]!.groups.length > 0,
+    'the brackets came back with the sets',
+  );
+});
+
+test('a requested deep read ignores the rate limit that paces the automatic one', async () => {
+  // The pool-by-pool read is throttled so an unseeded 64-pool event is not
+  // polled to death. A person pressing "Load every set" is not that, and used
+  // to be silently ignored for up to a full reconcile interval.
+  const { store, sync, world } = harness({
+    finished: true,
+    mockOptions: { hideCompletedFromEventSets: true },
+    engineOptions: { tickMs: 10, cadence: { doneMs: 20, fullReconcileMs: 3_600_000 } },
+  });
+
+  await sync.importTournament(world.slug);
+  const main = mainEvent(store);
+  assert.equal(store.countSets(main.id), 15);
+
+  store.db.prepare('DELETE FROM sets WHERE event_id = ?').run(main.id);
+  sync.refreshTrackedEvents();
+  sync.requestSync(main.id, true, true);
+  sync.start();
+  try {
+    await waitFor(() => store.countSets(main.id) === 15, 3000);
+  } finally {
+    sync.stop();
+  }
+});
+
+test('an event left with no sets says why on its own card', async () => {
+  // Silence is the thing being fixed. An unfiltered read that leaves an event
+  // empty records that fact where the operator is already looking.
+  const { store, sync, world } = harness({
+    wrapTransport: (inner) => ({
+      name: inner.name,
+      endpoint: inner.endpoint,
+      canMutate: inner.canMutate,
+      async execute(request: any) {
+        const op = request.operationName ?? '';
+        if (op === 'EventSets') {
+          return {
+            event: {
+              id: String(request.variables?.eventId),
+              sets: { nodes: [], pageInfo: { total: 0, totalPages: 1, page: 1 } },
+            },
+          };
+        }
+        if (op === 'PhaseGroupSets') {
+          return {
+            phaseGroup: {
+              id: String(request.variables?.phaseGroupId),
+              displayIdentifier: 'A',
+              bracketType: 'DOUBLE_ELIMINATION',
+              state: 2,
+              rounds: [],
+              sets: { nodes: [], pageInfo: { total: 0, totalPages: 1, page: 1 } },
+            },
+          };
+        }
+        return inner.execute(request);
+      },
+    }),
+  });
+
+  await sync.importTournament(world.slug);
+  const main = mainEvent(store);
+  assert.equal(store.countSets(main.id), 0);
+
+  const status = store.eventStatuses().find((s) => s.eventId === main.id)!;
+  assert.match(status.syncError ?? '', /no sets/i);
 });
 
 test('an unknown slug reports not-found rather than throwing', async () => {

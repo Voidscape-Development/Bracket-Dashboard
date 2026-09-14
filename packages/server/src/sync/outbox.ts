@@ -27,6 +27,7 @@ import {
   type TournamentSet,
 } from '@bracket/shared';
 
+import { noopActivity, type ActivityHandle, type ActivityLog } from '../activity.js';
 import type { Store } from '../db/store.js';
 import type { StartggClient } from '../startgg/client.js';
 import { GqlError } from '../startgg/transport.js';
@@ -36,7 +37,19 @@ export interface OutboxWorkerOptions {
   tickMs?: number;
   maxAttempts?: number;
   batchSize?: number;
+  /** Where to report progress. Omitted in tests and scripts. */
+  activity?: ActivityLog;
 }
+
+/** Reads as a sentence in the activity feed: "Sending report to start.gg". */
+const COMMAND_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  reportSet: 'Sending a reported score to start.gg',
+  markInProgress: 'Marking a set in progress on start.gg',
+  resetSet: 'Resetting a set on start.gg',
+  assignStation: 'Assigning a setup on start.gg',
+  assignStream: 'Assigning a stream on start.gg',
+  updateSeeding: 'Updating seeding on start.gg',
+});
 
 export interface OutboxResult {
   entry: OutboxEntry;
@@ -50,6 +63,7 @@ export class OutboxWorker extends EventEmitter {
   private readonly tickMs: number;
   private readonly maxAttempts: number;
   private readonly batchSize: number;
+  private readonly activity: ActivityLog | null;
 
   constructor(
     private readonly store: Store,
@@ -60,6 +74,16 @@ export class OutboxWorker extends EventEmitter {
     this.tickMs = options.tickMs ?? 3000;
     this.maxAttempts = options.maxAttempts ?? 6;
     this.batchSize = options.batchSize ?? 5;
+    this.activity = options.activity ?? null;
+  }
+
+  private track(command: OutboxEntry['command'], eventId: Id | null): ActivityHandle {
+    if (!this.activity) return noopActivity();
+    return this.activity.begin({
+      kind: 'report',
+      label: COMMAND_LABELS[command.kind] ?? 'Sending a change to start.gg',
+      eventId,
+    });
   }
 
   start(): void {
@@ -327,10 +351,12 @@ export class OutboxWorker extends EventEmitter {
       for (const entry of batch) {
         this.store.updateOutbox(entry.id, { status: 'sending' });
         this.emit('changed');
+        const handle = this.track(entry.command, entry.command.eventId ?? null);
 
         try {
           const conflict = await this.detectConflict(entry);
           if (conflict) {
+            handle.fail(new Error(conflict.message));
             this.store.updateOutbox(entry.id, { status: 'conflict', conflict });
             this.store.audit({
               userId: entry.userId,
@@ -368,7 +394,9 @@ export class OutboxWorker extends EventEmitter {
           });
           this.emit('sent', { entry, sets });
           this.emit('changed');
+          handle.succeed('Accepted by start.gg');
         } catch (error) {
+          handle.fail(error);
           this.handleSendFailure(entry, error);
         }
       }

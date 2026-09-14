@@ -76,6 +76,7 @@ function handleClientMessage(services: Services, clientId: string, raw: string):
       hub.subscribeDashboard(clientId, message.eventIds);
       hub.sendTo(clientId, { type: 'status', status: hub.connectionStatus });
       hub.sendTo(clientId, { type: 'event:status', statuses: store.eventStatuses() });
+      hub.sendTo(clientId, { type: 'activity', activity: hub.activitySnapshot });
       break;
     }
 

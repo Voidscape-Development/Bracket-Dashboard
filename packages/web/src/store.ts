@@ -8,6 +8,7 @@
  */
 
 import type {
+  ActivitySnapshot,
   CameraState,
   ConnectionStatus,
   Entrant,
@@ -23,6 +24,7 @@ import type {
   TournamentEvent,
   TournamentSet,
 } from '@bracket/shared';
+import { EMPTY_ACTIVITY } from '@bracket/shared';
 import { create } from 'zustand';
 
 export interface AppState {
@@ -39,8 +41,11 @@ export interface AppState {
   queueCounts: { queued: number; conflicts: number };
   status: ConnectionStatus;
   socketConnected: boolean;
+  /** What the server is working on right now, pushed over the socket. */
+  activity: ActivitySnapshot;
 
   setUser(user: SessionUser | null): void;
+  setActivity(activity: ActivitySnapshot): void;
   setTournaments(tournaments: Tournament[], statuses: EventStatus[]): void;
   loadEvent(payload: {
     event: TournamentEvent;
@@ -67,6 +72,7 @@ const EMPTY_STATUS: ConnectionStatus = {
   queuedCommands: 0,
   conflictCount: 0,
   requestsLastMinute: 0,
+  requestsInFlight: 0,
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -83,8 +89,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   queueCounts: { queued: 0, conflicts: 0 },
   status: EMPTY_STATUS,
   socketConnected: false,
+  activity: EMPTY_ACTIVITY,
 
   setUser: (user) => set({ user }),
+
+  setActivity: (activity) => set({ activity }),
 
   setTournaments: (tournaments, statuses) =>
     set({
@@ -244,6 +253,9 @@ export class LiveSocket {
         break;
       case 'status':
         store.patchStatus(message.status);
+        break;
+      case 'activity':
+        store.setActivity(message.activity);
         break;
       case 'outbox:changed':
         store.setQueue(message.entries, {

@@ -274,17 +274,51 @@ something a viewer can see actually changed.
 ### Importing a tournament that is already over
 
 A finished bracket imports in full — every set with its winner, score and games —
-so results stay browsable long after the event. Two things make that work:
+so results stay browsable long after the event.
 
-- Set reads ask start.gg for `STANDARD` order, never `CALL_ORDER`. Call order is
-  the queue of sets waiting for a station, so a set that has been played is not
-  in it and start.gg leaves it out; a finished event asked that way answers with
-  nothing at all.
-- If an unfiltered read still comes back empty for an event that has brackets,
-  each phase group is read directly instead. An event holding no sets is also
-  re-read unfiltered on its next pass rather than waiting for the 15-minute
-  reconcile, which repairs a database imported before this was fixed — no need to
-  delete and re-add the tournament.
+The difficulty is that `event.sets`, the obvious way to ask start.gg what an
+event contains, has repeatedly turned out to be an unreliable narrator about
+matches that have already been played: sometimes it omits them, sometimes it
+answers with nothing at all. Reading each phase group instead asks a different
+resolver, scoped to a bracket rather than to the event, and that one does list
+played sets. So:
+
+- Set reads ask for `STANDARD` order, never `CALL_ORDER`. Call order is the queue
+  of sets waiting for a station, so a played set is not in it and start.gg leaves
+  it out; a finished event asked that way answers with nothing at all.
+- An unfiltered event-level read is checked before it is believed. Nothing came
+  back, or start.gg's own `total` exceeds what it handed over, or the event is
+  finished yet not one returned set is complete — any of those and the event is
+  re-read one bracket at a time, and the two answers are merged.
+- Events start.gg reports as finished are read bracket by bracket on import,
+  without waiting for a symptom. Results are the reason anyone imports a finished
+  tournament.
+- If an event has no brackets on record at all, its tournament structure is
+  re-read to recover them rather than giving up silently.
+- An event still holding no sets after a complete read says so on its own card,
+  instead of rendering an empty bracket with no explanation.
+
+**Load every set.** The per-bracket read costs one request per pool, so outside
+an import it is paced: automatically, it runs on the first look at an event and
+then no more often than the 15-minute reconcile. The **Load every set** button on
+an event page (and on the card of any empty or finished event) ignores that
+pacing and reads every bracket now. It is the thing to press when a bracket you
+know is on start.gg is not showing up here.
+
+### Knowing what the app is doing
+
+Every call to start.gg is slow and invisible, and importing a large tournament is
+a few hundred requests. The sidebar carries a permanent activity line naming the
+current job — "Processing event data — Melee Singles", "Pulling set info", "Bracket
+3 of 12" — which opens into the full list: running work with progress, and
+recently finished work with its result. Failures stay in that list for five
+minutes, because "why is this bracket empty" gets asked after the failure rather
+than during it.
+
+The same feed covers imports, bracket reads, structure re-reads and queued reports
+going out to start.gg, and it is pushed over the same WebSocket as everything else,
+so a second machine watching the dashboard sees it too. `GET /api/activity` returns
+the same snapshot for anything that missed the socket.
 
 ---
 
